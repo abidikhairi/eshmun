@@ -34,8 +34,6 @@ class EshmunZeroConfig(PretrainedConfig):
             Dropout probability for attention weights.
         max_position_embeddings (`int`, *optional*, defaults to 512):
             Maximum sequence length the model can handle.
-        type_vocab_size (`int`, *optional*, defaults to 2):
-            Vocabulary size of token type ids.
         initializer_range (`float`, *optional*, defaults to 0.02):
             Std of the truncated normal initializer for weight initialization.
         layer_norm_eps (`float`, *optional*, defaults to 1e-12):
@@ -43,6 +41,8 @@ class EshmunZeroConfig(PretrainedConfig):
         local_window_size (`int`, *optional*, defaults to 64):
             Fixed window size for local self-attention. Each token attends to
             `local_window_size` tokens symmetrically around it.
+        apply_random_mask (`bool`, *optional*, defaults to `False`):
+            Whether to apply random mask along with local_attention_mask.
         alpha_init (`float`, *optional*, defaults to 0.5):
             Initial value for the learnable gate alpha (before sigmoid).
             A value of 0.0 means alpha = sigmoid(0) = 0.5 at init, giving
@@ -81,6 +81,7 @@ class EshmunZeroConfig(PretrainedConfig):
         initializer_range: float = 0.02,
         layer_norm_eps: float = 1e-12,
         local_window_size: int = 12,
+        apply_random_mask: bool = False,
         alpha_init: float = 0.0,
         pad_token_id: int = 0,
         position_embedding_type: str = "absolute",
@@ -103,6 +104,7 @@ class EshmunZeroConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.layer_norm_eps = layer_norm_eps
         self.local_window_size = local_window_size
+        self.apply_random_mask = apply_random_mask
         self.alpha_init = alpha_init
         self.position_embedding_type = position_embedding_type
         self.is_decoder = is_decoder

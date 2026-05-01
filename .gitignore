@@ -12,3 +12,4 @@ wheels/
 
 # Vscode
 .vscode/
+notebooks/eshmun_zero/wandb/

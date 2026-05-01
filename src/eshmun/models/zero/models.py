@@ -26,17 +26,17 @@ from transformers.modeling_outputs import (
 
 from eshmun.models.zero.configuration import EshmunZeroConfig
 from eshmun.models.zero.components import (
-    EshmunEmbeddings,
-    EshmunEncoder,
+    EshmunZeroEmbeddings,
+    EshmunZeroEncoder,
     EshmunPooler,
 )
 
 # ---------------------------------------------------------------------------
-# Utility: build additive attention mask from HF-style padding mask
+# Utility: build global attention mask from HF-style padding mask
 # ---------------------------------------------------------------------------
 
 
-def _prepare_attention_mask(
+def _prepare_global_attention_mask(
     attention_mask: Optional[torch.Tensor],
     dtype: torch.dtype,
 ) -> Optional[torch.Tensor]:
@@ -53,6 +53,53 @@ def _prepare_attention_mask(
     mask = attention_mask[:, None, None, :]  # (B, 1, 1, T)
     mask = (1.0 - mask.to(dtype)) * torch.finfo(dtype).min
     return mask
+
+
+# ---------------------------------------------------------------------------
+# Utility: build local attention mask from HF-style padding mask
+# ---------------------------------------------------------------------------
+
+
+def _prepare_local_attention_mask(
+    attention_mask: Optional[torch.Tensor],
+    window_size: int,
+    dtype: torch.dtype,
+) -> Optional[torch.Tensor]:
+    """
+    Combines a HF-style padding mask with a local window constraint into a
+    single additive mask broadcastable over heads.
+
+    Args:
+        attention_mask: (B, T) with values in {0=ignore, 1=attend}, or None
+        window_size:    Number of tokens each position can attend to.
+                        Must be odd for a symmetric window; even values are
+                        rounded up by 1 internally.
+        dtype:          Target float dtype for the mask values.
+
+    Returns:
+        (B, 1, T, T) additive mask with 0.0 (attend) or -inf (ignore),
+        or None if both inputs would produce an all-attend mask.
+    """
+    if attention_mask is None:
+        return None
+
+    B, T = attention_mask.shape
+    device = attention_mask.device
+
+    half = (window_size - 1) // 2
+    i = torch.arange(T, device=device).unsqueeze(1)  # (T, 1)
+    j = torch.arange(T, device=device).unsqueeze(0)  # (1, T)
+    window_mask = (j - i).abs() > half  # True = block (T, T)
+
+    padding_blocked = attention_mask == 0  # True = block (B, T)
+    padding_mask = padding_blocked[:, None, None, :]  # (B, 1, 1, T)
+
+    combined = window_mask.unsqueeze(0) | padding_mask  # (B, 1, T, T)
+
+    attention_mask = torch.zeros(B, 1, T, T, dtype=dtype, device=device)
+    attention_mask.masked_fill_(combined, torch.finfo(dtype).min)
+
+    return attention_mask
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +147,16 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
 
     def __init__(self, config: EshmunZeroConfig, add_pooling_layer: bool = True):
         super().__init__(config)
-        self.embeddings = EshmunEmbeddings(config)
-        self.encoder = EshmunEncoder(config)
+        self.embeddings = EshmunZeroEmbeddings(config)
+
+        self.token_to_hidden = nn.Linear(
+            config.embedding_size, config.hidden_size, False
+        )
+        self.encoder = EshmunZeroEncoder(config)
+        self.hidden_to_token = nn.Linear(
+            config.hidden_size, config.embedding_size, False
+        )
+
         self.pooler = EshmunPooler(config) if add_pooling_layer else None
         self.post_init()
 
@@ -121,6 +176,7 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
         output_alphas: bool = False,
         return_dict: bool = True,
     ) -> Union[BaseModelOutputWithPooling, Tuple]:
+
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("Provide either input_ids or inputs_embeds, not both.")
 
@@ -131,13 +187,27 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
                 position_ids=position_ids,
             )
 
-        additive_mask = _prepare_attention_mask(attention_mask, inputs_embeds.dtype)
+        inputs_embeds = self.token_to_hidden(inputs_embeds)
 
+        global_attention_mask = _prepare_global_attention_mask(
+            attention_mask=attention_mask,
+            dtype=inputs_embeds.dtype # type: ignore
+        )
+        
+        local_attention_mask = _prepare_local_attention_mask(
+            attention_mask=attention_mask,
+            window_size=self.config.local_window_size,
+            dtype=inputs_embeds.dtype # type: ignore
+        )
+        
         hidden_states, alphas = self.encoder(
             inputs_embeds,
-            attention_mask=additive_mask,
+            global_attention_mask=global_attention_mask,
+            local_attention_mask=local_attention_mask,
             output_alphas=output_alphas,
         )
+
+        hidden_states = self.hidden_to_token(hidden_states)
 
         pooled = self.pooler(hidden_states) if self.pooler is not None else None
 
@@ -186,7 +256,7 @@ class EshmunMLMPredictionHead(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
+class EshmunZeroForMaskedLM(EshmunZeroPreTrainedModel):
     """
     Eshmun-Zero for Masked Language Modelling (BERT-style).
 
@@ -203,7 +273,7 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
         >>> out.loss.backward()
 
     Args:
-        config: EshmunConfig
+        config: EshmunZeroConfig
 
     Inputs:
         input_ids: (B, T)
@@ -220,12 +290,18 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
         alphas: list[Tensor] if output_alphas
     """
 
-    _tied_weights_keys = ["lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "eshmun.embeddings.wte.weight"}
 
     def __init__(self, config: EshmunZeroConfig):
         super().__init__(config)
+
         self.eshmun = EshmunZeroModel(config, add_pooling_layer=False)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, False)
+
+        self.hidden_to_tokens = nn.Linear(
+            config.hidden_size, config.embedding_size, False
+        )
+        self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, False)
+
         self.post_init()
 
     def get_input_embeddings(self) -> nn.Embedding:
@@ -260,10 +336,10 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
             return_dict=True,
         )
 
-        sequence_output = outputs.last_hidden_state  # (B, T, D)
+        sequence_output = self.hidden_to_tokens(outputs.last_hidden_state)  # (B, T, D)
         logits = self.lm_head(sequence_output)  # (B, T, V)
 
-        loss = torch.FloatTensor([-1.0])
+        loss = None
 
         if labels is not None:
             loss = F.cross_entropy(
@@ -279,7 +355,7 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
             return ((loss,) + out) if loss is not None else out
 
         return MaskedLMOutput(
-            loss=loss,
+            loss=loss,  # type: ignore
             logits=logits,
             hidden_states=None,
             attentions=None,

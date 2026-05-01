@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from eshmun.models.zero.attention import EshmunGatedAttention
+from eshmun.models.zero.attention import EshmunZeroGatedAttention
 from eshmun.models.zero.configuration import EshmunZeroConfig
 
 ACT2FN = {
@@ -31,14 +31,15 @@ ACT2FN = {
 # ---------------------------------------------------------------------------
 
 
-class EshmunEmbeddings(nn.Module):
+class EshmunZeroEmbeddings(nn.Module):
     """
-    Word + absolute position + token-type embeddings, followed by LayerNorm
+    Word + absolute position, followed by LayerNorm
     and dropout.
     """
 
     def __init__(self, config: EshmunZeroConfig):
         super().__init__()
+        
         self.wte = nn.Embedding(
             config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id
         )
@@ -50,12 +51,11 @@ class EshmunEmbeddings(nn.Module):
         self.layer_norm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
-        self.tokens_to_hidden = nn.Linear(config.embedding_size, config.hidden_size, False)
 
         self.register_buffer(
             "position_ids",
             torch.arange(config.max_position_embeddings).unsqueeze(0),
-            persistent=False,
+            persistent=True,
         )
 
     def forward(
@@ -67,7 +67,7 @@ class EshmunEmbeddings(nn.Module):
         B, T = input_ids.shape
 
         if position_ids is None:
-            position_ids = self.position_ids[:, :T]
+            position_ids = self.position_ids[:, :T] # type: ignore
 
         word_emb = self.wte(input_ids)
         pos_emb = self.wpe(position_ids)
@@ -76,7 +76,7 @@ class EshmunEmbeddings(nn.Module):
         embeddings = self.layer_norm(embeddings)
         embeddings = self.dropout(embeddings)
 
-        return self.tokens_to_hidden(embeddings)
+        return embeddings
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ class EshmunEmbeddings(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-class EshmunFeedForward(nn.Module):
+class EshmunZeroFeedForward(nn.Module):
     """
     Position-wise feed-forward:  FFN(x) = LayerNorm( x + W2 act(W1 x) )
     """
@@ -111,7 +111,7 @@ class EshmunFeedForward(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-class EshmunLayer(nn.Module):
+class EshmunZeroLayer(nn.Module):
     """
     One Eshmun-Zero transformer layer:
 
@@ -123,15 +123,16 @@ class EshmunLayer(nn.Module):
         causal: whether to use causal masking in the attention branches
     """
 
-    def __init__(self, config: EshmunZeroConfig, causal: bool = False):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__()
-        self.attention = EshmunGatedAttention(config, causal=causal)
-        self.ffn = EshmunFeedForward(config)
+        self.attention = EshmunZeroGatedAttention(config)
+        self.ffn = EshmunZeroFeedForward(config)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        global_attention_mask: Optional[torch.Tensor] = None,
+        local_attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
@@ -139,7 +140,9 @@ class EshmunLayer(nn.Module):
             alpha: current gate value (scalar tensor)
         """
         hidden_states, alpha = self.attention(
-            hidden_states, attention_mask=attention_mask
+            hidden_states,
+            local_attention_mask=local_attention_mask,
+            global_attention_mask=global_attention_mask
         )
         hidden_states = self.ffn(hidden_states)
         return hidden_states, alpha
@@ -150,7 +153,7 @@ class EshmunLayer(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-class EshmunEncoder(nn.Module):
+class EshmunZeroEncoder(nn.Module):
     """
     Stack of EshmunLayer with causal=False (bidirectional).
     Used by EshmunModel (base) and EshmunForMaskedLM.
@@ -159,13 +162,14 @@ class EshmunEncoder(nn.Module):
     def __init__(self, config: EshmunZeroConfig):
         super().__init__()
         self.layers = nn.ModuleList(
-            [EshmunLayer(config, causal=False) for _ in range(config.num_hidden_layers)]
+            [EshmunZeroLayer(config) for _ in range(config.num_hidden_layers)]
         )
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        global_attention_mask: Optional[torch.Tensor] = None,
+        local_attention_mask: Optional[torch.Tensor] = None,
         output_alphas: bool = False,
     ) -> Tuple[torch.Tensor, Optional[List[torch.Tensor]]]:
         """
@@ -178,10 +182,15 @@ class EshmunEncoder(nn.Module):
             hidden_states: (B, T, D)
             alphas: list of scalar tensors (one per layer) if output_alphas else None
         """
-        alphas = [] if output_alphas else None
+        alphas = []
 
         for layer in self.layers:
-            hidden_states, alpha = layer(hidden_states, attention_mask=attention_mask)
+            hidden_states, alpha = layer(
+                hidden_states,
+                global_attention_mask=global_attention_mask,
+                local_attention_mask=local_attention_mask
+            )
+            
             if output_alphas:
                 alphas.append(alpha)
 

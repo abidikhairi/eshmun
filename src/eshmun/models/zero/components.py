@@ -40,15 +40,17 @@ class EshmunEmbeddings(nn.Module):
     def __init__(self, config: EshmunZeroConfig):
         super().__init__()
         self.wte = nn.Embedding(
-            config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id
+            config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id
         )
-        self.wpe = nn.Embedding(config.max_position_embeddings, config.hidden_size)
-        self.token_type_embeddings = nn.Embedding(
-            config.type_vocab_size, config.hidden_size
+        self.wpe = nn.Embedding(
+            config.max_position_embeddings,
+            config.embedding_size
         )
 
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.layer_norm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        
+        self.tokens_to_hidden = nn.Linear(config.embedding_size, config.hidden_size, False)
 
         self.register_buffer(
             "position_ids",
@@ -59,27 +61,22 @@ class EshmunEmbeddings(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        **kwargs
     ) -> torch.Tensor:
         B, T = input_ids.shape
 
         if position_ids is None:
             position_ids = self.position_ids[:, :T]
 
-        if token_type_ids is None:
-            token_type_ids = torch.zeros(
-                B, T, dtype=torch.long, device=input_ids.device
-            )
-
         word_emb = self.wte(input_ids)
         pos_emb = self.wpe(position_ids)
-        tt_emb = self.token_type_embeddings(token_type_ids)
 
-        embeddings = word_emb + pos_emb + tt_emb
+        embeddings = word_emb + pos_emb
         embeddings = self.layer_norm(embeddings)
         embeddings = self.dropout(embeddings)
-        return embeddings
+
+        return self.tokens_to_hidden(embeddings)
 
 
 # ---------------------------------------------------------------------------

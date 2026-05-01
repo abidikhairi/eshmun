@@ -208,7 +208,6 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
     Inputs:
         input_ids: (B, T)
         attention_mask: (B, T) with 1=attend, 0=ignore (optional)
-        token_type_ids: (B, T) (optional)
         position_ids: (B, T) (optional)
         inputs_embeds: (B, T, D) alternative to input_ids (optional)
         labels: (B, T) token ids; positions with -100 are ignored in the loss
@@ -245,7 +244,6 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
         self,
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
@@ -256,7 +254,6 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
         outputs = self.eshmun(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
             output_alphas=output_alphas,
@@ -266,7 +263,7 @@ class EshmunForMaskedLM(EshmunZeroPreTrainedModel):
         sequence_output = outputs.last_hidden_state  # (B, T, D)
         logits = self.lm_head(sequence_output)  # (B, T, V)
 
-        loss = torch.FloatTensor(-1.0)
+        loss = torch.FloatTensor([-1.0])
 
         if labels is not None:
             loss = F.cross_entropy(

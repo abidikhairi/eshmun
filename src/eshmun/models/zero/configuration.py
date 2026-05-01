@@ -16,6 +16,8 @@ class EshmunZeroConfig(PretrainedConfig):
     Args:
         vocab_size (`int`, *optional*, defaults to 25):
             Vocabulary size of the model.
+        embedding_size (`int`, *optional*, defaults to 4096)
+            Dimensionality of the embedding and lm_head layers.
         hidden_size (`int`, *optional*, defaults to 768):
             Dimensionality of the encoder layers and the pooler layer.
         num_hidden_layers (`int`, *optional*, defaults to 12):
@@ -24,7 +26,7 @@ class EshmunZeroConfig(PretrainedConfig):
             Number of attention heads for each attention layer.
         intermediate_size (`int`, *optional*, defaults to 3072):
             Dimensionality of the feed-forward layer.
-        hidden_act (`str`, *optional*, defaults to `"gelu"`):
+        hidden_act (`str`, *optional*, defaults to `"silu"`):
             Activation function in the feed-forward layer.
         hidden_dropout_prob (`float`, *optional*, defaults to 0.1):
             Dropout probability for all fully connected layers.
@@ -57,9 +59,9 @@ class EshmunZeroConfig(PretrainedConfig):
 
     Example::
 
-        >>> from eshmun.v0 import EshmunConfig, EshmunModel
-        >>> config = EshmunConfig()
-        >>> model = EshmunModel(config)
+        >>> from eshmun.models.zero import EshmunZeroConfig, EshmunZeroModel
+        >>> config = EshmunZeroConfig()
+        >>> model = EshmunZeroModel(config)
     """
 
     model_type = "eshmun_zero"
@@ -67,11 +69,12 @@ class EshmunZeroConfig(PretrainedConfig):
     def __init__(
         self,
         vocab_size: int = 25,
+        embedding_size: int = 4096,
         hidden_size: int = 768,
         num_hidden_layers: int = 12,
         num_attention_heads: int = 12,
         intermediate_size: int = 3072,
-        hidden_act: str = "gelu",
+        hidden_act: str = "silu",
         hidden_dropout_prob: float = 0.1,
         attention_probs_dropout_prob: float = 0.1,
         max_position_embeddings: int = 514,
@@ -88,6 +91,7 @@ class EshmunZeroConfig(PretrainedConfig):
         super().__init__(pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads

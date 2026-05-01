@@ -170,7 +170,6 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
         self,
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         output_alphas: bool = False,
@@ -183,7 +182,6 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embeddings(
                 input_ids=input_ids,
-                token_type_ids=token_type_ids,
                 position_ids=position_ids,
             )
 

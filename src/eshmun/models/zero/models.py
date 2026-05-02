@@ -295,9 +295,6 @@ class EshmunZeroForMaskedLM(EshmunZeroPreTrainedModel):
 
         self.eshmun = EshmunZeroModel(config, add_pooling_layer=False)
 
-        self.hidden_to_tokens = nn.Linear(
-            config.hidden_size, config.embedding_size, False
-        )
         self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, False)
 
         self.post_init()
@@ -334,8 +331,7 @@ class EshmunZeroForMaskedLM(EshmunZeroPreTrainedModel):
             return_dict=True,
         )
 
-        sequence_output = self.hidden_to_tokens(outputs.last_hidden_state)  # (B, T, D)
-        logits = self.lm_head(sequence_output)  # (B, T, V)
+        logits = self.lm_head(outputs.last_hidden_state)  # (B, T, V)
 
         loss = None
 

@@ -163,6 +163,7 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embeddings.wte
 
+    # pyrefly: ignore [bad-override]
     def set_input_embeddings(self, value: nn.Embedding):
         self.embeddings.word_embeddings = value
 
@@ -302,6 +303,7 @@ class EshmunZeroForMaskedLM(EshmunZeroPreTrainedModel):
     def get_input_embeddings(self) -> nn.Embedding:
         return self.eshmun.get_input_embeddings()
 
+    # pyrefly: ignore [bad-override]
     def set_input_embeddings(self, value: nn.Embedding):
         self.eshmun.set_input_embeddings(value)
 

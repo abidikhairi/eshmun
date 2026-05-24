@@ -140,7 +140,8 @@ class EshmunZeroGatedAttention(nn.Module):
         """
         Args:
             hidden_states: (B, T, D)
-            attention_mask: (B, 1, 1, T) additive mask, optional
+            global_attention_mask: (B, 1, 1, T) additive mask for global attention, optional
+            local_attention_mask: (B, 1, T, T) additive mask for local window attention, optional
 
         Returns:
             output: (B, T, D)  — layer-normed residual output

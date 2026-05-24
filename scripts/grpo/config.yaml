@@ -1,0 +1,72 @@
+# Eshmun GRPO training configuration
+# Run: python scripts/grpo/train.py train --config scripts/grpo/config.yaml
+
+model:
+  # HuggingFace model ID or path to a local Eshmun checkpoint
+  name_or_path: "khairi/6L-ALT-f32-student-SFT"
+
+tokenizer:
+  name_or_path: "khairi/6L-ALT-f32-student-SFT"
+
+dataset:
+  # HuggingFace dataset ID or local path; must have a text column for prompts
+  name_or_path: "khairi/swissprot-cot-grpo"
+  split: "train"
+  prompt_column: "UserInput"
+  max_prompt_length: 512
+  chat_template:
+    enabled: true
+    system_prompt: null
+  metadata_columns: ["protein_family_stat"]
+
+training:
+  output_dir: "/tmp/outputs/grpo-run"
+
+  # General
+  num_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  warmup_steps: 20
+  max_grad_norm: 1.0
+  seed: 42
+
+  # Logging / checkpointing
+  logging_steps: 10
+  save_steps: 200
+  eval_steps: 200
+
+  # Mixed precision — set exactly one to true, or both false for fp32
+  bf16: false
+  fp16: false
+
+  # GRPO-specific
+  group_size: 4             # completions sampled per prompt (G)
+  epsilon: 0.2              # PPO clipping coefficient
+  beta: 0.01                # KL penalty coefficient
+  num_ppo_epochs: 1         # gradient updates per rollout batch
+  temperature: 1.0          # sampling temperature
+  max_new_tokens: 512       # max completion length
+  ref_model_sync_epochs: 1  # sync reference model every N epochs (0 = never)
+
+# Reward functions to combine. Each entry must name a registered class.
+# Optional `kwargs` are forwarded to the class constructor.
+rewards:
+  - name: SequenceValidityReward
+  - name: SequenceSimilarityReward
+    kwargs:
+      non_valid_seq_reward: -1.0
+  - name: LengthReward
+    kwargs:
+      min_length: 50
+      max_length: 500
+      out_of_range_penalty: -1.0
+  - name: AminoAcidRepetitionPenalty
+    kwargs:
+      min_aa_repetition: 10
+
+# Per-reward weights for the weighted sum. Must match the length of `rewards`
+# above. Set to null (or omit) for uniform weighting.
+# reward_weights: [0.4, 0.6]
+reward_weights: [0.1, 0.6, 0.2, 0.1]

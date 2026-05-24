@@ -2,9 +2,8 @@
 Eshmun-Zero model definitions (HuggingFace-compatible).
 
 Models:
-  - EshmunModel          : base encoder (no LM head)
-  - EshmunForMaskedLM    : encoder + MLM head (BERT-style, bidirectional)
-  - EshmunForCausalLM    : decoder + causal LM head (GPT-style, autoregressive)
+  - EshmunZeroModel          : base encoder (no LM head)
+  - EshmunZeroForMaskedLM    : encoder + MLM head (BERT-style, bidirectional)
 
 All models inherit from PreTrainedModel and expose the standard HF interface:
   - from_pretrained / save_pretrained
@@ -133,10 +132,10 @@ class EshmunZeroModel(EshmunZeroPreTrainedModel):
     Eshmun-Zero base model: embeddings + bidirectional encoder (no LM head).
 
     Suitable as a backbone for downstream tasks (classification, NER, etc.)
-    or as the encoder in EshmunForMaskedLM.
+    or as the encoder in EshmunZeroForMaskedLM.
 
     Args:
-        config: EshmunConfig
+        config: EshmunZeroConfig
         add_pooling_layer: whether to include a [CLS] pooler (default True)
 
     Outputs (BaseModelOutputWithPooling):

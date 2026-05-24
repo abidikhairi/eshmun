@@ -32,21 +32,21 @@ class EshmunZeroConfig(PretrainedConfig):
             Dropout probability for all fully connected layers.
         attention_probs_dropout_prob (`float`, *optional*, defaults to 0.1):
             Dropout probability for attention weights.
-        max_position_embeddings (`int`, *optional*, defaults to 512):
+        max_position_embeddings (`int`, *optional*, defaults to 514):
             Maximum sequence length the model can handle.
         initializer_range (`float`, *optional*, defaults to 0.02):
             Std of the truncated normal initializer for weight initialization.
         layer_norm_eps (`float`, *optional*, defaults to 1e-12):
             Epsilon for layer normalization.
-        local_window_size (`int`, *optional*, defaults to 64):
+        local_window_size (`int`, *optional*, defaults to 12):
             Fixed window size for local self-attention. Each token attends to
             `local_window_size` tokens symmetrically around it.
         apply_random_mask (`bool`, *optional*, defaults to `False`):
             Whether to apply random mask along with local_attention_mask.
-        alpha_init (`float`, *optional*, defaults to 0.5):
-            Initial value for the learnable gate alpha (before sigmoid).
-            A value of 0.0 means alpha = sigmoid(0) = 0.5 at init, giving
-            equal weight to local and global attention.
+        alpha_init (`float`, *optional*, defaults to 0.0):
+            Initial raw value for the learnable gate scalar before sigmoid.
+            The effective alpha = sigmoid(alpha_init), so the default of 0.0
+            gives alpha = 0.5, weighting local and global attention equally.
         pad_token_id (`int`, *optional*, defaults to 0):
             Id of the padding token.
         position_embedding_type (`str`, *optional*, defaults to `"absolute"`):
@@ -57,11 +57,13 @@ class EshmunZeroConfig(PretrainedConfig):
             Whether to return the last key/value attentions (KV cache).
             Only relevant when `is_decoder=True`.
 
-    Example::
+    Example:
 
-        >>> from eshmun.models.zero import EshmunZeroConfig, EshmunZeroModel
-        >>> config = EshmunZeroConfig()
-        >>> model = EshmunZeroModel(config)
+    ```python
+    >>> from eshmun.models.zero import EshmunZeroConfig, EshmunZeroModel
+    >>> config = EshmunZeroConfig()
+    >>> model = EshmunZeroModel(config)
+    ```
     """
 
     model_type = "eshmun_zero"
@@ -89,7 +91,7 @@ class EshmunZeroConfig(PretrainedConfig):
         use_cache: bool = True,
         **kwargs,
     ):
-        super().__init__(pad_token_id=pad_token_id, **kwargs)
+        super().__init__(pad_token_id=pad_token_id, **kwargs)  # pyrefly: ignore [unexpected-keyword]
 
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size

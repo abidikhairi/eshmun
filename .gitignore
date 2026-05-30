@@ -16,3 +16,6 @@ notebooks/eshmun_zero/wandb/
 
 # Local Notebooks
 notebooks/local
+
+# Data Directory
+data/

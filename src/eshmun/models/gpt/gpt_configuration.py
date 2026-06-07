@@ -15,8 +15,8 @@ class EshmunGPTConfig(PreTrainedConfig):
         dropout: float = 0.05,
         max_seq_len: int = 512,
         bos_token_id: int = 0,
-        eos_token_id: int = 1,
-        pad_token_id: int = 1,
+        eos_token_id: int = 2,
+        pad_token_id: int = 3,
         attn_impl: Literal[
             "mha", "sparse", "sliding_window", "gqa", "compressed", "gated"
         ] = "mha",

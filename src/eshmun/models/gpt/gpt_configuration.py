@@ -42,3 +42,6 @@ class EshmunGPTConfig(PreTrainedConfig):
         self.top_k = top_k
         self.num_kv_heads = num_kv_heads
         self.window_size = window_size
+
+        ## NOTE: for compatibility with .generate() api
+        self.num_hidden_layers = num_layers

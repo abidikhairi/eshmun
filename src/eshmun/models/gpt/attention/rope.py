@@ -15,6 +15,8 @@ class RoPE(nn.Module):
         
         self.register_buffer("cos_table", angles.cos())
         self.register_buffer("sin_table", angles.sin())
+        
+        # TODO: implement dynamic length scaling 
 
     def apply_rotation_matrix(self, x: torch.Tensor) -> torch.Tensor:
         L = x.shape[-2]

@@ -26,7 +26,7 @@ class BaseAttentionModule(nn.Module, ABC):
         """.format(config.hidden_size, config.num_attention_heads)
     
     @abstractmethod
-    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None, **kwargs) -> torch.Tensor:
         pass
     
     

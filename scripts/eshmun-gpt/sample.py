@@ -49,8 +49,8 @@ def main(args):
             sequence = sequence.replace(' ', '')
             sequences.append(SeqRecord(id=f"Sequence{_:03d}", name=f"Sequence{_:03d}", description="", seq=Seq(sequence)))
 
-    for i, rec in enumerate(sequences, 1):
-        print(rec)
+    SeqIO.write(sequences, args.output, "fasta")
+    print(f"Saved {len(sequences)} sequences to {args.output}")
 
 
 if __name__ == '__main__':
@@ -72,6 +72,8 @@ if __name__ == '__main__':
                         help='Sampling temperature.')
     parser.add_argument('--repetition_penalty', type=float, default=1.3,
                         help='Penalty applied to already-seen tokens.')
+    parser.add_argument('--output', default='sequences.fasta',
+                        help='Path to the output FASTA file.')
 
     args = parser.parse_args()
     main(args)

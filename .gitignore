@@ -18,5 +18,5 @@ notebooks/eshmun_zero/wandb/
 notebooks/local
 
 # Data Directory
-data/
+/data/
 docs/paper

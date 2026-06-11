@@ -2,12 +2,12 @@ import math
 from abc import ABC, abstractmethod
 import torch
 from torch import nn
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
+from eshmun.models.zero.configuration import EshmunZeroConfig
 
 
 
 class BaseAttentionModule(nn.Module, ABC):
-    def __init__(self, config: EshmunGPTConfig):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__()
         self._validate_config(config)
         

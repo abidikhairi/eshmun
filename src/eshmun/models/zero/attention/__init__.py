@@ -1,8 +1,8 @@
-from eshmun.models.gpt.attention.base import BaseAttentionModule
-from eshmun.models.gpt.attention.mha import MultiHeadAttention
-from eshmun.models.gpt.attention.gqa import GroupedQueryAttention
-from eshmun.models.gpt.attention.gated import GatedAttention
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
+from eshmun.models.zero.attention.base import BaseAttentionModule
+from eshmun.models.zero.attention.mha import MultiHeadAttention
+from eshmun.models.zero.attention.gqa import GroupedQueryAttention
+from eshmun.models.zero.attention.gated import GatedAttention
+from eshmun.models.zero.configuration import EshmunZeroConfig
 
 ATTENTION_REGISTRY = {
     "mha": MultiHeadAttention,
@@ -12,7 +12,7 @@ ATTENTION_REGISTRY = {
 }
 
 
-def build_attention(config: EshmunGPTConfig) -> BaseAttentionModule:
+def build_attention(config: EshmunZeroConfig) -> BaseAttentionModule:
     attn_cls = ATTENTION_REGISTRY.get(config.attn_impl)
     if attn_cls is None:
         raise ValueError(

@@ -7,19 +7,18 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqIO import SeqRecord
 
-from eshmun.tokenization import EshmunTokenizer
-from eshmun.models.gpt import EshmunGPT
+from eshmun.models.zero.tokenization import EshmunZeroTokenizer
+from eshmun.models.zero import EshmunZero
 
 
-TOKENIZER_PATH = 'data/eshmun-gpt/tokenizer'
 
 
 def main(args):
-    tokenizer = EshmunTokenizer.from_pretrained(TOKENIZER_PATH)
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    tokenizer = EshmunZeroTokenizer()
 
-    model = EshmunGPT.from_pretrained(args.model, torch_dtype=torch.float32)
+
+    model = EshmunZero.from_pretrained(args.model, torch_dtype=torch.float32)
     model.to(device)  # type: ignore[arg-type]
     model.eval()
 

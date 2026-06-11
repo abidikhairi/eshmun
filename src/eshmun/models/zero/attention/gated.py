@@ -1,13 +1,13 @@
 import torch
 from torch import nn
 
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
-from eshmun.models.gpt.attention.base import BaseAttentionModule
-from eshmun.models.gpt.attention.rope import RoPE
+from eshmun.models.zero.configuration import EshmunZeroConfig
+from eshmun.models.zero.attention.base import BaseAttentionModule
+from eshmun.models.zero.attention.rope import RoPE
 
 
 class GatedAttention(BaseAttentionModule):
-    def __init__(self, config: EshmunGPTConfig):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__(config)
         
         if self.use_rope:

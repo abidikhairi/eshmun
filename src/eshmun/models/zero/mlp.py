@@ -1,11 +1,11 @@
 import torch
 from torch import nn
 
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
+from eshmun.models.zero.configuration import EshmunZeroConfig
 
 
 class MLP(nn.Module):
-    def __init__(self, config: EshmunGPTConfig):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__()
         
         self.dropout = config.dropout

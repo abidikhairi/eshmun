@@ -1,17 +1,17 @@
-"""Unit tests for GroupedQueryAttention (eshmun.models.gpt.attention.gqa)."""
+"""Unit tests for GroupedQueryAttention (eshmun.models.zero.attention.gqa)."""
 
 import pytest
 import torch
 
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
-from eshmun.models.gpt.attention.gqa import GroupedQueryAttention
+from eshmun.models.zero.configuration import EshmunZeroConfig
+from eshmun.models.zero.attention.gqa import GroupedQueryAttention
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def make_config(**overrides) -> EshmunGPTConfig:
+def make_config(**overrides) -> EshmunZeroConfig:
     defaults = dict(
         hidden_size=64,
         num_attention_heads=8,
@@ -21,7 +21,7 @@ def make_config(**overrides) -> EshmunGPTConfig:
         use_rope=False,
     )
     defaults.update(overrides)
-    return EshmunGPTConfig(**defaults)
+    return EshmunZeroConfig(**defaults)
 
 
 def make_hidden(bsz: int, seq_len: int, hidden_size: int) -> torch.Tensor:

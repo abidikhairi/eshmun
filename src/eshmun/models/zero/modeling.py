@@ -4,13 +4,13 @@ from transformers import PreTrainedModel, GenerationMixin, GenerationConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.cache_utils import Cache
 
-from eshmun.models.gpt.gpt_configuration import EshmunGPTConfig
-from eshmun.models.gpt.attention import build_attention
-from eshmun.models.gpt.mlp import MLP
+from eshmun.models.zero.configuration import EshmunZeroConfig
+from eshmun.models.zero.attention import build_attention
+from eshmun.models.zero.mlp import MLP
 
 
-class EshmunGPTDecoderLayer(nn.Module):
-    def __init__(self, config: EshmunGPTConfig, layer_idx: int):
+class EshmunZeroLayer(nn.Module):
+    def __init__(self, config: EshmunZeroConfig, layer_idx: int):
         super().__init__()
 
         self.pre_attn_norm = nn.RMSNorm(config.hidden_size)
@@ -46,14 +46,14 @@ class EshmunGPTDecoderLayer(nn.Module):
         return hidden_states
 
 
-class EshmunGPTDecoder(nn.Module):
-    def __init__(self, config: EshmunGPTConfig):
+class EshmunZeroDecoder(nn.Module):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__()
         self.attn_impl = config.attn_impl
 
         self.layers = nn.ModuleList(
             [
-                EshmunGPTDecoderLayer(config, layer_idx)
+                EshmunZeroLayer(config, layer_idx)
                 for layer_idx in range(config.num_layers)
             ]
         )
@@ -85,13 +85,13 @@ class EshmunGPTDecoder(nn.Module):
         return hidden_states
 
 
-class EshmunGPT(PreTrainedModel, GenerationMixin):
+class EshmunZero(PreTrainedModel):
 
-    config_class = EshmunGPTConfig
-    
+    config_class = EshmunZeroConfig
+
     _tied_weights_keys = {"lm_head.weight": "tokens_embed.weight"}
 
-    def __init__(self, config: EshmunGPTConfig):
+    def __init__(self, config: EshmunZeroConfig):
         super().__init__(config)
 
         self.tokens_embed = nn.Embedding(
@@ -99,43 +99,29 @@ class EshmunGPT(PreTrainedModel, GenerationMixin):
         )
         self.positions_embed = nn.Embedding(config.max_seq_len, config.hidden_size)
 
-        self.model = EshmunGPTDecoder(config)
+        self.model = EshmunZeroDecoder(config)
 
         self.final_layer_norm = nn.RMSNorm(config.hidden_size)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, False)
 
         ## Tie weights explicitly
         self.lm_head.weight = self.tokens_embed.weight
-        
+
         self.generation_config = GenerationConfig(
             do_sample=True,
             top_k=950,
             top_p=0.95,
             repetition_penalty=1.3,
         )
-        
+
         self.post_init()
 
-    def prepare_inputs_for_generation(
-        self,
-        input_ids: torch.LongTensor,
-        next_sequence_length: int | None = None,
-        past_key_values: Cache | None = None,
-        attention_mask: torch.LongTensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        is_first_iteration: bool | None = False,
-        **kwargs,
-    ):
-        return {"input_ids": input_ids, "attention_mask": attention_mask}
-
-    def _build_causal_mask(self, attention_mask: torch.Tensor):
+    def _build_3d_mask(self, attention_mask: torch.Tensor):
         bsz, seq_len = attention_mask.shape
         expanded_attention_mask = attention_mask[:, None, None, :]
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len), diagonal=0).to(
-            expanded_attention_mask.device
-        )
+        full_mask = torch.ones(seq_len, seq_len).to(expanded_attention_mask.device)
 
-        expanded_attention_mask = expanded_attention_mask * causal_mask
+        expanded_attention_mask = expanded_attention_mask * full_mask
         expanded_attention_mask = (1.0 - expanded_attention_mask) * torch.finfo(
             torch.float32
         ).min
@@ -181,14 +167,16 @@ class EshmunGPT(PreTrainedModel, GenerationMixin):
         if self.config.attn_impl in ("gated", "sliding_window"):
             sliding_window_mask = self._build_sliding_window_mask(attention_mask)
 
-        causal_mask = self._build_causal_mask(attention_mask)
+        attention_mask_expanded = self._build_3d_mask(attention_mask)
 
         tokens_embeds = self.tokens_embed(input_ids)
         positions_embed = self.positions_embed(position_ids)
 
         hidden_states = tokens_embeds + positions_embed
 
-        last_hidden_states = self.model(hidden_states, causal_mask, sliding_window_mask)
+        last_hidden_states = self.model(
+            hidden_states, attention_mask_expanded, sliding_window_mask
+        )
 
         hidden_states = self.final_layer_norm(last_hidden_states)
 

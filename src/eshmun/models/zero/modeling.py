@@ -66,6 +66,10 @@ class EshmunZeroDecoder(nn.Module):
         **kwargs,
     ):
         for layer in self.layers:
+            # TODO(Bug) - Claude: `("sliding_window")` is a str, not a tuple, so this is a
+            # substring test (`attn_impl in "sliding_window"`), not membership. It works for
+            # the exact string "sliding_window" but would also match substrings like "window".
+            # Use a tuple: `if self.attn_impl in ("sliding_window",):`.
             if self.attn_impl in ("sliding_window"):
                 # NOTE: in sliding window attn, we use sliding_mask as the causal attention mask
                 hidden_states = layer(
@@ -122,6 +126,9 @@ class EshmunZero(PreTrainedModel):
         full_mask = torch.ones(seq_len, seq_len).to(expanded_attention_mask.device)
 
         expanded_attention_mask = expanded_attention_mask * full_mask
+        # TODO(Bug) - Claude: dtype is hardcoded to float32 here, while
+        # _build_sliding_window_mask uses self.dtype. Under a non-float32 dtype the two
+        # additive masks use different fill values. Use torch.finfo(self.dtype).min.
         expanded_attention_mask = (1.0 - expanded_attention_mask) * torch.finfo(
             torch.float32
         ).min

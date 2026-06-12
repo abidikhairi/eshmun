@@ -13,9 +13,12 @@ class MultiHeadAttention(BaseAttentionModule):
         if self.use_rope:
             self.rope = RoPE(self.head_dim, self.config.max_seq_len, base=10_000)
 
-        self.w_q = nn.Linear(self.head_dim, self.head_dim, bias=False)
-        self.w_k = nn.Linear(self.head_dim, self.head_dim, bias=False)
-        self.w_v = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        # Project the full hidden vector, then split into heads. The (hidden_size,
+        # hidden_size) weight gives every head its own (head_dim, head_dim) block,
+        # so the heads are independent (untied).
+        self.w_q = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.w_k = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.w_v = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
         self.w_o = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
@@ -27,32 +30,38 @@ class MultiHeadAttention(BaseAttentionModule):
     ):
         bsz, seq_len, _ = hidden_states.shape
 
-        hidden_states = hidden_states.view(bsz, seq_len, self.num_heads, self.head_dim)
-
-        queries_states = self.w_q(hidden_states).transpose(
-            1, 2
+        queries_states = (
+            self.w_q(hidden_states)
+            .view(bsz, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
         )  # (bsz, num_heads, seq_len, head_dim)
-        keys_states = self.w_k(hidden_states).transpose(
-            1, 2
+        keys_states = (
+            self.w_k(hidden_states)
+            .view(bsz, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
         )  # (bsz, num_heads, seq_len, head_dim)
-        values_states = self.w_v(hidden_states).transpose(
-            1, 2
-        )  # (bsz, seq_len, num_heads, head_dim)
+        values_states = (
+            self.w_v(hidden_states)
+            .view(bsz, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )  # (bsz, num_heads, seq_len, head_dim)
 
         if self.use_rope:
             queries_states, keys_states = self.rope(queries_states, keys_states)
 
-        keys_states = keys_states.transpose(-2, -1)
-
-        scores = torch.matmul(queries_states, keys_states) * self.scaling_factor
+        scores = (
+            torch.matmul(queries_states, keys_states.transpose(-2, -1))
+            * self.scaling_factor
+        )
 
         if attention_mask is not None:
             scores = scores + attention_mask
         scores = torch.softmax(scores, dim=-1)
 
-        output = self.w_o(
-            torch.matmul(scores, values_states).contiguous().view(bsz, seq_len, -1)
-        )
+        output = torch.matmul(scores, values_states)  # (bsz, num_heads, seq_len, head_dim)
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
+
+        output = self.w_o(output)
 
         if self.training:
             output = torch.dropout(output, p=self.dropout, train=self.training)

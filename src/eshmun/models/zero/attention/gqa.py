@@ -74,11 +74,8 @@ class GroupedQueryAttention(BaseAttentionModule):
 
         scores = torch.softmax(scores, dim=-1)
 
-        output = (
-            torch.matmul(scores, values_states)
-            .contiguous()
-            .view(bsz, seq_len, self.hidden_size)
-        )
+        output = torch.matmul(scores, values_states)
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
 
         output = self.w_o(output)
 

@@ -18,7 +18,8 @@ class EshmunZeroConfig(PreTrainedConfig):
         eos_token_id: int = 2,
         pad_token_id: int = 3,
         attn_impl: Literal[
-            "mha", "sparse", "sliding_window", "gqa", "compressed", "gated"
+            "mha", "sparse", "sliding_window", "gqa", "compressed", "gated",
+            "qwen", "token_filter"
         ] = "mha",
         use_rope: bool = False,
         top_k: int = 5,

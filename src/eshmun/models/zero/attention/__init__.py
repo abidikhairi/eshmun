@@ -3,6 +3,7 @@ from eshmun.models.zero.attention.mha import MultiHeadAttention
 from eshmun.models.zero.attention.gqa import GroupedQueryAttention
 from eshmun.models.zero.attention.gated import GatedAttention
 from eshmun.models.zero.attention.qwen import QwenGatedAttention
+from eshmun.models.zero.attention.token_filter import TokenFilterAttention
 from eshmun.models.zero.configuration import EshmunZeroConfig
 
 ATTENTION_REGISTRY = {
@@ -10,7 +11,8 @@ ATTENTION_REGISTRY = {
     "sliding_window": MultiHeadAttention,
     "gqa": GroupedQueryAttention,
     "gated": GatedAttention,
-    "qwen": QwenGatedAttention
+    "qwen": QwenGatedAttention,
+    "token_filter": TokenFilterAttention,
 }
 
 

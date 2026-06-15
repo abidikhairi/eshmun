@@ -43,12 +43,15 @@ COMMON_ARGS = \
 	--logging_steps      $(LOGGING_STEPS) \
 	--use_rope
 
-.PHONY: all mha sparse sliding_window gqa compressed gated
+.PHONY: all mha sparse sliding_window gqa compressed gated token_filter
 
 all: mha sparse sliding_window gqa compressed gated
 
 mha:
 	$(TRAIN) $(COMMON_ARGS) --attn_impl mha --output_dir $(OUTPUT_BASE)/mha
+
+token_filter: # DONE
+	$(TRAIN) $(COMMON_ARGS) --attn_impl token_filter --output_dir $(OUTPUT_BASE)/token_filter
 
 sparse:
 	$(TRAIN) $(COMMON_ARGS) --attn_impl sparse --output_dir $(OUTPUT_BASE)/sparse

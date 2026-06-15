@@ -143,7 +143,7 @@ if __name__ == "__main__":
 
     # Model architecture
     parser.add_argument("--attn_impl", default="mha",
-                        choices=["mha", "sparse", "sliding_window", "gqa", "compressed", "gated"],
+                        choices=["mha", "sparse", "sliding_window", "token_filter", "qwen", "gqa", "compressed", "gated"],
                         help="Attention implementation.")
     parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument("--intermediate_size", type=int, default=512)

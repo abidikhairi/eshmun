@@ -3,7 +3,6 @@
 import torch
 
 from eshmun.models.zero import EshmunZero
-from eshmun.models.zero.tokenization import EshmunZeroTokenizer
 
 
 LENGTH_BUCKETS = ["0-100", "100-200", "200-300", "300-400", ">400"]
@@ -33,11 +32,6 @@ def get_hidden_states(
 
     return model.final_layer_norm(hidden_states)
 
-
-def maskable_positions(input_ids: torch.Tensor, tokenizer: EshmunZeroTokenizer) -> list[int]:
-    """Indices of residue tokens, excluding bos/eos/pad/unk/mask special tokens."""
-    special_ids = set(tokenizer.all_special_ids)
-    return [i for i, token_id in enumerate(input_ids.tolist()) if token_id not in special_ids]
 
 def length_bucket(length: int) -> str:
     if length < 100:

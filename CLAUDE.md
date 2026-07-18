@@ -5,10 +5,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Eshmun is a family of Protein Language Models (PLMs) built in two paradigms:
-- **Encoder (MLM)** — Eshmun-Zero: protein understanding via masked language modeling
+- **Encoder** — Eshmun-Zero: protein understanding
 - **Decoder (CLM)** — Eshmun (GPT-style): autoregressive protein sequence generation
 
 All models are HuggingFace-compatible (`PreTrainedModel`, `PretrainedConfig`, standard outputs).
+
+### Current research focus: thinking-aware instruction tuning
+
+InstructProtein and ProLLaMA — two state-of-the-art protein instruction models — both train
+directly on `(instruction, response)` pairs. Our hypothesis: inserting an explicit reasoning
+step before the final answer — a chain of thought grounded in the sequence's biological
+features — improves both protein **generation** (description/family → sequence) and
+**annotation** (sequence → description/family) over direct instruction tuning.
+
+Reasoning traces are built **programmatically** (template/rule-based) from known sequence
+features — motifs, domains, family/superfamily membership, composition statistics — rather
+than distilled from an external LLM or self-sampled (STaR-style). See `ROADMAP.md` for the
+phased plan: baseline direct-SFT replication → thinking-aware dataset construction →
+thinking-aware SFT → head-to-head evaluation.
+
+The `<think>...</think>` response format this implies is already anticipated by the reward
+registry in `trainer/grpo/reward_functions/format.py` (`PredicateReward`,
+`RegexReward`) — usable now as format-compliance checks and later for RL-based refinement of
+reasoning traces.
 
 ## Setup
 
@@ -20,31 +39,18 @@ All models are HuggingFace-compatible (`PreTrainedModel`, `PretrainedConfig`, st
 
 ### Eshmun-Zero (`src/eshmun/models/zero/`)
 
-Encoder-only model trained with masked language modeling on protein sequences.
+Encoder-style model built on a pluggable attention registry (`build_attention`, selected via `config.attn_impl`): `mha`, `sliding_window`, `gqa`, `gated`, `qwen`, `token_filter`.
 
-**Key design — gated hybrid attention (`EshmunZeroGatedAttention`):**
-- Each layer runs two independent attention heads in parallel: local sliding-window (`local_window_size` tokens) and global full-sequence attention
-- Combined via a convex gate: `output = alpha * local + (1 - alpha) * global`, where `alpha = sigmoid(s)` and `s` is a per-layer learnable scalar
-- Alpha values can be inspected at runtime with `output_alphas=True`
-
-**Dimension flow:**
-```
-input_ids → EshmunZeroEmbeddings (embedding_size=4096)
-          → token_to_hidden linear (→ hidden_size=768)
-          → EshmunZeroEncoder (N × [GatedAttention + FFN])
-          → hidden_to_token linear (→ embedding_size=4096)
-          → lm_head (→ vocab_size=25)
-```
-
-The embedding/hidden size split allows a large embedding space (amino acid vocabulary) independent of the transformer width. LM head weights are tied to the input embedding.
+**Gated hybrid attention (`attention/gated.py`):**
+- Computes a single set of attention scores, then reads them under two masks: a global (full-sequence) mask and a local sliding-window mask (`config.window_size`)
+- Combined via a convex gate: `output = alpha * context_full + (1 - alpha) * context_window`, where `alpha = sigmoid(w_g)` is a learnable per-head scalar
 
 **Key classes:**
-- `EshmunZeroConfig` — vocab_size=25 (amino acid alphabet), local_window_size=12, alpha_init=0.0 (starts at alpha=0.5)
-- `EshmunZeroModel` — base encoder (no LM head), outputs `BaseModelOutputWithPooling`
-- `EshmunZeroForMaskedLM` — adds MLM head with tied embeddings, outputs `MaskedLMOutput`
-- `EshmunPooler` — pools `[CLS]` token for sequence-level tasks
+- `EshmunZeroConfig` — `vocab_size`, `hidden_size`, `num_layers`, `attn_impl`, `window_size`, `use_rope`, etc.
+- `EshmunZeroLayer` / `EshmunZeroDecoder` — pre-norm (RMSNorm) transformer stack: attention + MLP per layer
+- `EshmunZero` — top-level `PreTrainedModel`; `lm_head` weights tied to `tokens_embed`; outputs `CausalLMOutputWithPast`
 
-Attention masks are built in `models.py`: `_prepare_global_attention_mask` → `(B,1,1,T)` additive, `_prepare_local_attention_mask` → `(B,1,T,T)` additive with window constraint.
+Attention masks are built in `EshmunZero`: `_build_3d_mask` → `(B,1,1,T)` additive full mask, `_build_sliding_window_mask` → `(B,1,T,T)` additive with window constraint.
 
 ### Eshmun (decoder) (`src/eshmun/models/eshmun/`)
 
@@ -70,6 +76,4 @@ Pyrefly is the type checker. Suppress unavoidable errors with inline comments:
 
 ## Notebooks
 
-- `notebooks/eshmun_zero/` — MLM training, model testing, HuggingFace Hub push
-- `notebooks/zero_test/` — exploratory testing
 - `notebooks/local/` — gitignored local experiments

@@ -20,3 +20,6 @@ notebooks/local
 # Data Directory
 /data/
 docs/paper
+
+# Server credentials
+gpu_server.txt

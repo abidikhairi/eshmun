@@ -166,16 +166,19 @@ PROTEIN_PREFIX_TOKEN = "Ƥ"
 
 
 def encode_sequence(sequence: str) -> str:
-    """The dataset currently trains the InstructProtein-based pilot
-    (khairi/Eshmun-Thinking-Pilot), whose tokenizer has no protein-specific
-    vocabulary and otherwise BPE-merges multiple residues into one token --
-    a `Ƥ`-per-residue join disambiguates amino-acid letters from English text,
-    matching the pilot's own build_pairs.py / build_generation_pairs.py
-    convention (`Ƥ.join(sequence)`, verified against
-    src/eshmun/trainer/grpo/reward_functions/protein.py's PROTEIN_PREFIX_TOKEN).
-    Revisit once training moves to Eshmun's own tokenizer, which has dedicated
-    protein BPE tokens and needs no such marker."""
-    return f"<protein>{PROTEIN_PREFIX_TOKEN.join(sequence)}</protein>"
+    """Every residue gets its own `Ƥ` prefix (`ƤAƤCƤD...`), not just the ones
+    after the first: `Ƥ.join(sequence)` alone leaves the first residue
+    unprefixed (`join` inserts the separator between elements, not before
+    the first one), which tokenizes as plain English `'A'` (id 250 on
+    InstructProtein's tokenizer) instead of the dedicated `ƤA` token --
+    verified by encoding `"ACDEFGHIKLMNPQRSTVWY"` and inspecting the
+    resulting token ids. `hicai-zju/InstructProtein`'s tokenizer has a
+    dedicated single-token vocabulary entry per `Ƥ`+residue (`ƤA`, `ƤC`,
+    ...), so every residue needs the prefix to land on it instead of
+    falling back to ambiguous plain-English BPE. Revisit once training moves
+    to Eshmun's own tokenizer, which would need its own protein vocabulary
+    story."""
+    return f"<protein>{PROTEIN_PREFIX_TOKEN}{PROTEIN_PREFIX_TOKEN.join(sequence)}</protein>"
 
 
 # Generation direction (property -> sequence): the conditioning property is

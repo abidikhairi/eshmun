@@ -11,18 +11,30 @@ broader replay buffer), this one is protein + natural text only:
     - FineWeb-Edu:              5,000  (of    257,645)
     - FineMath:                  5,000  (of     54,615)
 
-Output is a single local parquet file (entry, content, source columns),
-shuffled, seed 42 throughout for reproducibility. Not pushed anywhere.
+UniRef50 sequences are re-encoded with a `Ƥ` marker on every residue (via
+scripts/data/thinking/reasoning.py's encode_sequence), so InstructProtein's
+tokenizer lands on the dedicated per-residue `ƤX` tokens instead of
+ambiguous plain-English BPE. Output is a single local parquet file (entry,
+content, source columns), shuffled, seed 42 throughout for reproducibility.
+Not pushed anywhere.
 
 Usage:
     python3 scripts/kothar/build_pretrain_mix.py
 """
 
 import os
+import re
+import sys
 
 import pandas as pd
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "data", "thinking"))
+from reasoning import encode_sequence  # noqa: E402
+
 SEED = 42
+
+PROTEIN_TAG_RE = re.compile(r"^<protein>(.*)</protein>$")
 
 SOURCE_DIR = "/run/media/khairi/seagate/data/uniref-replay-mix/data"
 OUTPUT_DIR = "/run/media/khairi/seagate/data/eshmun/data/kothar"
@@ -37,6 +49,13 @@ PARQUET_TARGETS = {
     "fineedu": 5_000,
     "finemath": 5_000,
 }
+
+
+def add_protein_markers(content: str) -> str:
+    match = PROTEIN_TAG_RE.match(content)
+    if not match:
+        raise ValueError(f"unexpected uniref50 content format: {content[:50]!r}")
+    return encode_sequence(match.group(1))
 
 
 def sample_uniref50() -> pd.DataFrame:
@@ -58,6 +77,7 @@ def sample_uniref50() -> pd.DataFrame:
         "-- raise UNIREF_OVERSAMPLE_FRAC or read more chunks"
     )
     df = df.sample(n=UNIREF_TARGET, random_state=SEED).reset_index(drop=True)
+    df["content"] = df["content"].map(add_protein_markers)
     df["source"] = "uniref50"
     return df
 

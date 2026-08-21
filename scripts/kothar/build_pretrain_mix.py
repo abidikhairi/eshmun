@@ -4,12 +4,16 @@ sequences plus a small amount of general-domain text, sampled from the
 existing uniref-replay-mix raw sources.
 
 Unlike that source mix (which also includes a StarCoder code split, for a
-broader replay buffer), this one is protein + natural text only:
+broader replay buffer), this one is protein + natural text only, sampled at
+a fixed 10:5:3:1 proteins:pubmed:finemath:fineweb-edu ratio, anchored to
+500,000 protein sequences:
 
-    - UniRef50 sequences:  2,000,000  (of ~10,000,000)
-    - PubMed abstracts:       20,000  (of    283,302)
-    - FineWeb-Edu:              5,000  (of    257,645)
-    - FineMath:                  5,000  (of     54,615)
+    - UniRef50 sequences: 500,000  (of ~10,000,000)
+    - PubMed abstracts:   250,000  (of    283,302)
+    - FineMath:            150,000  (of     54,615 -- sampled WITH replacement,
+                                      ~2.75x duplication; not enough unique
+                                      rows to cover this ratio at this scale)
+    - FineWeb-Edu:          50,000  (of    257,645)
 
 UniRef50 sequences are re-encoded with a `Ƥ` marker on every residue (via
 scripts/data/thinking/reasoning.py's encode_sequence), so InstructProtein's
@@ -40,14 +44,15 @@ SOURCE_DIR = "/run/media/khairi/seagate/data/uniref-replay-mix/data"
 OUTPUT_DIR = "/run/media/khairi/seagate/data/eshmun/data/kothar"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "pretrain_mix.parquet")
 
-UNIREF_TARGET = 2_000_000
+UNIREF_TARGET = 500_000
 UNIREF_CHUNKSIZE = 1_000_000
-UNIREF_OVERSAMPLE_FRAC = 0.25  # > 2M/10M, so one pass over the file is enough
+UNIREF_OVERSAMPLE_FRAC = 0.25  # > 500K/10M, so one pass over the file is enough
 
+# 10:5:3:1 proteins:pubmed:finemath:fineweb-edu, ratio unit = 50,000
 PARQUET_TARGETS = {
-    "pubmed": 20_000,
-    "fineedu": 5_000,
-    "finemath": 5_000,
+    "pubmed": 250_000,
+    "finemath": 150_000,
+    "fineedu": 50_000,
 }
 
 
@@ -85,7 +90,14 @@ def sample_uniref50() -> pd.DataFrame:
 def sample_parquet(name: str, n: int) -> pd.DataFrame:
     path = os.path.join(SOURCE_DIR, name, "train.parquet")
     df = pd.read_parquet(path, columns=["entry", "content"])
-    df = df.sample(n=n, random_state=SEED).reset_index(drop=True)
+    replace = n > len(df)
+    if replace:
+        print(
+            f"{name}: requested {n} rows but only {len(df)} available "
+            f"-- sampling with replacement ({n / len(df):.2f}x)",
+            file=sys.stderr,
+        )
+    df = df.sample(n=n, random_state=SEED, replace=replace).reset_index(drop=True)
     df["source"] = name
     return df
 

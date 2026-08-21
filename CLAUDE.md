@@ -4,30 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Eshmun is a family of Protein Language Models (PLMs) built in two paradigms:
-- **Encoder** — Eshmun-Zero: protein understanding
-- **Decoder (CLM)** — Eshmun (GPT-style): autoregressive protein sequence generation
+Eshmun is a Protein Language Model (PLM): a decoder-only, GPT-style model
+(`src/eshmun/models/eshmun/`) for autoregressive protein sequence generation.
+HuggingFace-compatible (`PreTrainedModel`, `PretrainedConfig`, standard outputs).
 
-All models are HuggingFace-compatible (`PreTrainedModel`, `PretrainedConfig`, standard outputs).
+An earlier encoder variant (Eshmun-Zero, protein understanding) has been removed from the
+codebase; if it resurfaces it'll be under `src/eshmun/models/zero/` again.
 
-### Current research focus: thinking-aware instruction tuning
+## Status
 
-InstructProtein and ProLLaMA — two state-of-the-art protein instruction models — both train
-directly on `(instruction, response)` pairs. Our hypothesis: inserting an explicit reasoning
-step before the final answer — a chain of thought grounded in the sequence's biological
-features — improves both protein **generation** (description/family → sequence) and
-**annotation** (sequence → description/family) over direct instruction tuning.
-
-Reasoning traces are built **programmatically** (template/rule-based) from known sequence
-features — motifs, domains, family/superfamily membership, composition statistics — rather
-than distilled from an external LLM or self-sampled (STaR-style). See `ROADMAP.md` for the
-phased plan: baseline direct-SFT replication → thinking-aware dataset construction →
-thinking-aware SFT → head-to-head evaluation.
-
-The `<think>...</think>` response format this implies is already anticipated by the reward
-registry in `trainer/grpo/reward_functions/format.py` (`PredicateReward`,
-`RegexReward`) — usable now as format-compliance checks and later for RL-based refinement of
-reasoning traces.
+The repository was reset to its core: modeling code and data preparation scripts only.
+Prior training infrastructure (SFT/GRPO/distillation trainers), evaluation pipelines,
+notebooks, and docs from the earlier thinking-aware instruction-tuning pilot were removed —
+that work is starting over from scratch. Check `ROADMAP.md` for current direction before
+assuming any research conclusions still hold.
 
 ## Setup
 
@@ -37,24 +27,16 @@ reasoning traces.
 
 ## Architecture
 
-### Eshmun-Zero (`src/eshmun/models/zero/`)
-
-Encoder-style model built on a pluggable attention registry (`build_attention`, selected via `config.attn_impl`): `mha`, `sliding_window`, `gqa`, `gated`, `qwen`, `token_filter`.
-
-**Gated hybrid attention (`attention/gated.py`):**
-- Computes a single set of attention scores, then reads them under two masks: a global (full-sequence) mask and a local sliding-window mask (`config.window_size`)
-- Combined via a convex gate: `output = alpha * context_full + (1 - alpha) * context_window`, where `alpha = sigmoid(w_g)` is a learnable per-head scalar
-
-**Key classes:**
-- `EshmunZeroConfig` — `vocab_size`, `hidden_size`, `num_layers`, `attn_impl`, `window_size`, `use_rope`, etc.
-- `EshmunZeroLayer` / `EshmunZeroDecoder` — pre-norm (RMSNorm) transformer stack: attention + MLP per layer
-- `EshmunZero` — top-level `PreTrainedModel`; `lm_head` weights tied to `tokens_embed`; outputs `CausalLMOutputWithPast`
-
-Attention masks are built in `EshmunZero`: `_build_3d_mask` → `(B,1,1,T)` additive full mask, `_build_sliding_window_mask` → `(B,1,T,T)` additive with window constraint.
-
 ### Eshmun (decoder) (`src/eshmun/models/eshmun/`)
 
-Decoder-only model for autoregressive protein generation, architecturally similar to OPT.
+Decoder-only model for autoregressive protein generation, architecturally identical to
+HuggingFace's OPT (`transformers.models.opt`) — same config fields and state-dict key
+layout (`model.decoder.embed_tokens`, `model.decoder.layers.N.self_attn.{q,k,v,out}_proj`,
+`lm_head.weight`, ...), verified by loading a `facebook/opt-*` checkpoint directly into
+`EshmunForCausalLM` and matching logits exactly. Only `model_type` differs (`"eshmun"` vs
+`"opt"`), so `AutoModel` won't auto-resolve between them, but a `facebook/opt-*` or any
+OPT-derived checkpoint (e.g. `hicai-zju/InstructProtein`) can be loaded in directly via
+`EshmunForCausalLM.load_state_dict(...)`.
 
 **Key classes:**
 - `EshmunConfig` — vocab_size=50272, supports `word_embed_proj_dim` ≠ `hidden_size` (adds projection layers)
@@ -66,6 +48,18 @@ Supports multiple attention backends: eager, Flash Attention, SDPA, FlexAttentio
 
 Pre/post layer norm is controlled by `do_layer_norm_before` in config.
 
+### Tokenizer (`src/eshmun/tokenization.py`)
+
+`EshmunTokenizer` — thin `PreTrainedTokenizerFast` wrapper with Eshmun's default special
+tokens (`<bos>`, `<eos>`, `<unk>`, pad aliased to `<eos>`).
+
+### Data preparation (`scripts/data/thinking/`)
+
+Standalone scripts (FASTA parsing, UniProt field extraction, SCOP/PPI dataset construction,
+instruction-pool generation, KG building, identity-based splitting) for building
+instruction/annotation datasets from UniProt/SCOP sources. Not wired to any trainer
+currently — reusable building blocks for whatever training pipeline comes next.
+
 ## Type Checking
 
 Pyrefly is the type checker. Suppress unavoidable errors with inline comments:
@@ -73,7 +67,3 @@ Pyrefly is the type checker. Suppress unavoidable errors with inline comments:
 # pyrefly: ignore [bad-override]
 # pyrefly: ignore [bad-argument-type]
 ```
-
-## Notebooks
-
-- `notebooks/local/` — gitignored local experiments

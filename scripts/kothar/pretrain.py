@@ -66,9 +66,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-size", type=int, default=2048, help="packed sequence length; matches the student's max_position_embeddings")
     parser.add_argument("--per-device-batch-size", type=int, default=4)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
-    parser.add_argument("--epochs", type=float, default=3.0)
+    parser.add_argument("--epochs", type=float, default=10.0)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
-    parser.add_argument("--warmup-fraction", type=float, default=0.03, help="fraction of estimated total steps used to compute warmup_steps")
+    parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--logging-steps", type=int, default=10)
     parser.add_argument("--save-steps", type=int, default=500)
     parser.add_argument("--run-name", default="kothar-pretrain-409m")
@@ -102,16 +102,15 @@ def main() -> None:
     )
 
     # warmup_ratio is deprecated (transformers >=5.2) -- estimate total steps
-    # ourselves and pass an explicit warmup_steps instead.
+    # ourselves for visibility; warmup_steps itself is a fixed CLI value.
     num_devices = max(torch.cuda.device_count(), 1)
     effective_batch_size = args.per_device_batch_size * args.gradient_accumulation_steps * num_devices
     steps_per_epoch = -(-len(dataset) // effective_batch_size)  # ceil division
     total_steps = args.max_steps if args.max_steps is not None else round(steps_per_epoch * args.epochs)
-    warmup_steps = round(total_steps * args.warmup_fraction)
     print(
         f"{len(dataset)} packed blocks, effective batch size {effective_batch_size} "
         f"({args.per_device_batch_size} x {args.gradient_accumulation_steps} accum x {num_devices} device(s)) "
-        f"-> {steps_per_epoch} steps/epoch, {total_steps} total steps, {warmup_steps} warmup steps"
+        f"-> {steps_per_epoch} steps/epoch, {total_steps} total steps, {args.warmup_steps} warmup steps"
     )
 
     training_args = TrainingArguments(
@@ -123,7 +122,7 @@ def main() -> None:
         num_train_epochs=args.epochs,
         max_steps=args.max_steps if args.max_steps is not None else -1,
         learning_rate=args.learning_rate,
-        warmup_steps=warmup_steps,
+        warmup_steps=args.warmup_steps,
         lr_scheduler_type="cosine",
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,

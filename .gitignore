@@ -12,7 +12,7 @@ wheels/
 
 # Vscode
 .vscode/
-notebooks/eshmun_zero/wandb/
+wandb/
 
 # Local Notebooks
 notebooks/local

@@ -21,6 +21,8 @@ before).
 Usage:
     python3 scripts/kothar/pretrain.py
     python3 scripts/kothar/pretrain.py --per-device-batch-size 8 --epochs 1
+    python3 scripts/kothar/pretrain.py --resume-from-checkpoint  # auto-resume from latest checkpoint-N in --output-dir
+    python3 scripts/kothar/pretrain.py --resume-from-checkpoint checkpoints/kothar-pretrain-409m/checkpoint-1000
 """
 
 import argparse
@@ -28,7 +30,7 @@ import os
 
 import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer, Trainer, TrainingArguments, default_data_collator
+from transformers import AutoTokenizer, Trainer, TrainerCallback, TrainingArguments, default_data_collator
 
 from eshmun.models.eshmun import EshmunForCausalLM
 
@@ -43,6 +45,20 @@ def tokenize(tokenizer):
         return tokenizer(batch["content"])
 
     return _tokenize
+
+
+class SyncStateIntervalsCallback(TrainerCallback):
+    """On resume, Trainer.train() restores TrainerState wholesale from the
+    checkpoint's trainer_state.json, which silently overrides save_steps/
+    logging_steps/eval_steps with whatever they were at save time -- CLI
+    flags meant to change them on resume (e.g. a faster --save-steps after a
+    crash) are printed as a mismatch warning but otherwise ignored. Force
+    the intervals back to the CLI-requested values every step."""
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        state.save_steps = args.save_steps
+        state.logging_steps = args.logging_steps
+        state.eval_steps = args.eval_steps
 
 
 def group_texts(examples, block_size: int):
@@ -75,6 +91,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-proc", type=int, default=4, help="workers for tokenization/packing")
     parser.add_argument("--max-train-samples", type=int, default=None, help="cap on raw (pre-packing) dataset rows, for smoke tests")
     parser.add_argument("--max-steps", type=int, default=None, help="stop after this many optimizer steps regardless of --epochs, for smoke tests")
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="PATH",
+        help="resume training. Bare flag auto-detects the latest checkpoint-N under --output-dir; "
+        "or pass an explicit checkpoint directory.",
+    )
     return parser.parse_args()
 
 
@@ -136,8 +161,13 @@ def main() -> None:
         args=training_args,
         train_dataset=dataset,
         data_collator=default_data_collator,
+        callbacks=[SyncStateIntervalsCallback()],
     )
-    trainer.train()
+
+    resume = args.resume_from_checkpoint
+    if resume == "auto":
+        resume = True  # Trainer auto-finds the latest checkpoint-N under output_dir
+    trainer.train(resume_from_checkpoint=resume)
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
 

@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--logging-steps", type=int, default=10)
-    parser.add_argument("--save-steps", type=int, default=500)
+    parser.add_argument("--save-steps", type=int, default=250)
     parser.add_argument("--run-name", default="kothar-pretrain-409m")
     parser.add_argument("--num-proc", type=int, default=4, help="workers for tokenization/packing")
     parser.add_argument("--max-train-samples", type=int, default=None, help="cap on raw (pre-packing) dataset rows, for smoke tests")

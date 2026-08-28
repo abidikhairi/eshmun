@@ -16,8 +16,15 @@ codebase; if it resurfaces it'll be under `src/eshmun/models/zero/` again.
 The repository was reset to its core: modeling code and data preparation scripts only.
 Prior training infrastructure (SFT/GRPO/distillation trainers), evaluation pipelines,
 notebooks, and docs from the earlier thinking-aware instruction-tuning pilot were removed —
-that work is starting over from scratch. Check `ROADMAP.md` for current direction before
-assuming any research conclusions still hold.
+that work restarted under the codename **Kothar**: a layer-subsetted (409M) InstructProtein
+student, continued-pretrained (Stage 1, in progress) then fine-tuned with vs. without a
+programmatic `<think>...</think>` rationale block (Stage 2, not yet built), compared
+head-to-head against each other and against the zero-shot teacher. See
+[`docs/kothar-pipeline.md`](docs/kothar-pipeline.md) for the full plan and decision history,
+[`docs/status.md`](docs/status.md) for what's running right now, and `ROADMAP.md` for the
+phase checklist. `docs/` doubles as the working notes for the accompanying manuscript
+(`~/work/phd/writing/thinking_plm`) — check it before assuming any research conclusion
+still holds, and update it (not just code) when a design decision changes.
 
 ## Setup
 
@@ -58,7 +65,21 @@ tokens (`<bos>`, `<eos>`, `<unk>`, pad aliased to `<eos>`).
 Standalone scripts (FASTA parsing, UniProt field extraction, SCOP/PPI dataset construction,
 instruction-pool generation, KG building, identity-based splitting) for building
 instruction/annotation datasets from UniProt/SCOP sources. Not wired to any trainer
-currently — reusable building blocks for whatever training pipeline comes next.
+currently — reusable building blocks for whatever training pipeline comes next. Details:
+[`docs/data-preparation.md`](docs/data-preparation.md).
+
+### Kothar pipeline (`scripts/kothar/`, `scripts/eval/pretraining/`)
+
+Student construction, Stage-1 continued-pretraining data/training scripts, checkpoint
+evaluation (validation perplexity, generation sampling, pLDDT). Details, current numbers,
+and live training status: [`docs/kothar-pipeline.md`](docs/kothar-pipeline.md),
+[`docs/experiments.md`](docs/experiments.md), [`docs/status.md`](docs/status.md).
+
+## Conventions
+
+- **Always load/train models in float32**, never float16 (`dtype=torch.float32`,
+  `fp16=False`/`bf16=False` in `TrainingArguments`) — float16 has caused unexpected errors
+  in this project before. Don't conditionally switch to float16 based on CUDA availability.
 
 ## Type Checking
 

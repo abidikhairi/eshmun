@@ -75,7 +75,15 @@ def extract_sequence(decoded: str) -> tuple[str, bool]:
     end = decoded.find(PROTEIN_END, start)
     complete = end != -1
     body = decoded[start:end if complete else None]
-    residues = body.replace(PROTEIN_PREFIX_TOKEN, "")
+    # When incomplete, `body` runs to the end of the decoded string, which can
+    # include the model drifting into non-residue text (observed: plain
+    # English) and/or literal special-token text leaking in from
+    # skip_special_tokens=False (`</s>`, `<pad>` repeated -- num_return_sequences
+    # batches pad already-finished samples to the longest one's length). A
+    # plain `.replace(PROTEIN_PREFIX_TOKEN, "")` only strips the `Ƥ` marker and
+    # leaves that garbage in the "sequence" -- filter to the valid residue
+    # alphabet instead of just removing the marker.
+    residues = "".join(c for c in body if c in RESIDUES)
     return residues, complete
 
 

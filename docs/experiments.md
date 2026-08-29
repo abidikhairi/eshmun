@@ -56,7 +56,7 @@ for construction details. No quantitative eval at this stage (that's the point
 of Stage 1) — this only confirms the construction didn't silently break the
 model.
 
-## Stage-1 validation-perplexity trend (checkpoints 1000–3500)
+## Stage-1 validation-perplexity trend (checkpoints 1000–3750)
 
 Steps 1000–2500 sourced from wandb run `flursky/Kothar/xvxcbijd`
 ("ppl-by-source-checkpoints-1000-1500-2000", extended to include 2500); steps
@@ -80,15 +80,16 @@ deterministic/reproducible.
 | 3000 | 16.11 | 92.94 | 59.40 | 164.01 | 35.47 |
 | 3250 | 16.06 | 87.26 | 54.72 | 155.17 | 34.29 |
 | 3500 | 16.03 | 81.82 | 50.20 | 145.89 | 33.11 |
+| 3750 | 15.99 | 77.18 | 47.01 | 139.15 | 32.15 |
 
 Reading this: UniRef50 perplexity is already low and barely moving (16.6→16.0,
 close to the teacher's own 15.95 baseline above — makes sense, the student
 warm-starts from teacher layers, and protein modeling was already the
 teacher's strength). The three natural-language subsets are all improving
-steadily and substantially (pubmed 235→82, finemath 204→50, fineedu 401→146)
+steadily and substantially (pubmed 235→77, finemath 204→47, fineedu 401→139)
 — i.e. the replay mix is doing its job of recovering natural-language
-competence, and hasn't plateaued as of step 3500. Overall held-out perplexity
-dropped from 58.5 to 33.1 over the same range. Training will be stopped at
+competence, and hasn't plateaued as of step 3750. Overall held-out perplexity
+dropped from 58.5 to 32.1 over the same range. Training will be stopped at
 step 5250 (epoch 5) regardless of whether a plateau is reached by then — see
 [`status.md`](status.md).
 
@@ -103,6 +104,7 @@ steps (`train/loss` from wandb run `ltiumvoj`, converted to perplexity):
 | 3000 | 35.36 | 35.47 | 0.11 |
 | 3250 | 34.44 | 34.29 | −0.15 |
 | 3500 | 32.41 | 33.11 | 0.70 |
+| 3750 | 31.57 | 32.15 | 0.58 |
 
 The gap stays small (≤2.2 points) and isn't widening with training — if the
 model were starting to memorize training data, train loss would drop faster
@@ -173,7 +175,7 @@ very short incomplete fragments (4–23 aa) getting inflated scores, not by
 better full-length generations. Output:
 `data/eval/pretraining/checkpoint-2500_gen30_plddt_esmfold2.csv`.
 
-## Structural plausibility pilot: pLDDT (checkpoints 2500–3500, M-prefixed, n=30 each)
+## Structural plausibility pilot: pLDDT (checkpoints 2500–3750, M-prefixed, n=30 each)
 
 Folded with ESMFold2 (EvolutionaryScale, via Biohub Forge SDK,
 `scripts/eval/pretraining/plddt_esmfold2_forge.py`, model
@@ -192,20 +194,22 @@ protocol (`--prefix M`, seed 4242, checkpoint's own weights at that step).
 | 3000 (`checkpoint-3000_gen30_prefixM_plddt_esmfold2.csv`) | 32.50 | 33.31 | 22.29 (seq_27, 242 aa) | 47.53 (seq_4, 23 aa) |
 | 3250 (`checkpoint-3250_gen30_prefixM_plddt_esmfold2.csv`) | 32.46 | 31.06 | 21.50 | 47.53 |
 | 3500 (`checkpoint-3500_gen30_prefixM_plddt_esmfold2.csv`) | 30.01 | 27.47 | 20.37 | 46.02 |
+| 3750 (`checkpoint-3750_gen30_prefixM_plddt_esmfold2.csv`) | 30.39 | 27.44 | 20.96 | 47.51 |
 
-Five checkpoints now: mean 29.50→30.29→32.50→32.46→**30.01**. Unlike the
-perplexity trend (monotonically improving on every source through step
-3500), pLDDT is **not monotonic** — it rose through 3000, roughly held at
-3250, then dropped back at 3500 to below the 3000/3250 level. Since each
-point is an independent 30-sequence sample (different random draws each
-time, not the same sequences re-folded across checkpoints), this reads as
-sampling noise on top of a possibly-flat-or-mildly-improving underlying
-trend, not a real regression in the model — but it's a concrete
-demonstration that this 30-sequence pLDDT pilot is noisier than the
-perplexity trend and shouldn't be read checkpoint-to-checkpoint in isolation
-(a 2-3 point swing is within its noise floor). Larger sample sizes or
-re-folding the same sequence set across checkpoints would be needed to get a
-cleaner signal if this metric becomes load-bearing for a paper claim.
+Six checkpoints now: mean 29.50→30.29→32.50→32.46→30.01→**30.39**. Unlike
+the perplexity trend (monotonically improving on every source through step
+3750), pLDDT is **not monotonic** — it rose through 3000-3250 then has
+oscillated in a ~30-32 band since (3500: 30.01, 3750: 30.39), rather than
+continuing to track perplexity's steady decline. Since each point is an
+independent 30-sequence sample (different random draws each time, not the
+same sequences re-folded across checkpoints), this reads as sampling noise
+on top of a flat-to-mildly-improving underlying trend, not a real regression
+in the model — but it's a concrete demonstration that this 30-sequence pLDDT
+pilot is noisier than the perplexity trend and shouldn't be read
+checkpoint-to-checkpoint in isolation (a 2-3 point swing is within its noise
+floor). Larger sample sizes or re-folding the same sequence set across
+checkpoints would be needed to get a cleaner signal if this metric becomes
+load-bearing for a paper claim.
 
 **Read these numbers cautiously**: pLDDT in the 20–46 range is low by the
 standards of *real, evolved* proteins (pLDDT is conventionally reported

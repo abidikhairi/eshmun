@@ -117,9 +117,28 @@ Logs to Weights & Biases, project `Kothar`, run name `kothar-pretrain-409m`.
 
 Effective config as actually run: `per_device_batch_size=24`,
 `gradient_accumulation_steps=8`, single GPU → effective batch size 192;
-learning rate 2e-5, cosine schedule, 500 warmup steps; ~6296 steps/epoch over
-the 950K-row mix at 2048-token blocks (201,447 packed blocks), 10 epochs
-requested → 10,500 total steps planned.
+learning rate 2e-5, cosine schedule (built for a 10,500-step total from the
+run's first launch — see the note on `--max-steps` below), 500 warmup steps;
+**1,050 steps/epoch** over the 950K-row mix at 2048-token blocks (201,447
+packed blocks ÷ effective batch 192), 10 epochs requested → 10,500 total
+steps planned. (An earlier version of this doc said "~6,296 steps/epoch" —
+that number was actually from the botched first resume attempt that used the
+wrong batch size, per-device 4 instead of 24; see [`status.md`](status.md).
+1,050 is the correct figure for the run as actually configured.)
+
+Stopping early, mid-run, must not use `--max-steps`: `pretrain.py` passes
+`max_steps` straight into `TrainingArguments`, and `Trainer.create_scheduler()`
+rebuilds the cosine LR schedule from `max_steps` (when set) *every time
+training starts, including on resume* — so resuming with a smaller
+`--max-steps` than the run was originally launched with would silently
+recompute the cosine decay to finish by that new, smaller step count instead
+of the original 10,500, distorting the LR trajectory for however much
+training remains. To stop at a specific step without touching the schedule,
+let the run continue unmodified and kill the process right after it writes
+the checkpoint at that step (steps landing on the `save_steps` cadence, e.g.
+any multiple of 250, always get a checkpoint) — see
+[`status.md`](status.md) for the epoch-5 (step 5250) stopping point decided
+2026-08-28.
 
 A `SyncStateIntervalsCallback` forces `save_steps`/`logging_steps`/`eval_steps`
 back to their CLI-requested values on every step — necessary because

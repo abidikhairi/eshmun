@@ -56,18 +56,19 @@ for construction details. No quantitative eval at this stage (that's the point
 of Stage 1) — this only confirms the construction didn't silently break the
 model.
 
-## Stage-1 validation-perplexity trend (checkpoints 1000–2750)
+## Stage-1 validation-perplexity trend (checkpoints 1000–3500)
 
 Steps 1000–2500 sourced from wandb run `flursky/Kothar/xvxcbijd`
-("ppl-by-source-checkpoints-1000-1500-2000", extended to include 2500); step
-2750 added 2026-08-28 by re-running `checkpoint_trend.py` directly (not
-logged to wandb this time — that run's wandb-table logging wasn't part of the
-committed script, just an ad hoc addition in the session that produced it).
-All runs are against `data/kothar/valid_holdout.parquet` (disjoint from the
-training mix, same 10:5:3:1 source ratio, 190 rows); local copy of the raw
-per-step CSV at `data/kothar/checkpoint_trend.csv`. The 2000/2500 rows were
-re-verified bit-for-bit against the wandb-logged values while producing the
-2750 point, confirming the eval is deterministic/reproducible.
+("ppl-by-source-checkpoints-1000-1500-2000", extended to include 2500); steps
+2750 onward added 2026-08-28/29 by re-running `checkpoint_trend.py` directly
+(not logged to wandb this time — that run's wandb-table logging wasn't part
+of the committed script, just an ad hoc addition in the session that
+produced it). All runs are against `data/kothar/valid_holdout.parquet`
+(disjoint from the training mix, same 10:5:3:1 source ratio, 190 rows); local
+copy of the raw per-step CSV at `data/kothar/checkpoint_trend.csv`. The
+2000/2500 rows were re-verified bit-for-bit against the wandb-logged values
+while producing the 2750/3000 points, confirming the eval is
+deterministic/reproducible.
 
 | step | uniref50 | pubmed | finemath | fineedu | overall |
 |---:|---:|---:|---:|---:|---:|
@@ -76,18 +77,43 @@ re-verified bit-for-bit against the wandb-logged values while producing the
 | 2000 | 16.34 | 129.03 | 93.31 | 228.51 | 42.58 |
 | 2500 | 16.21 | 107.91 | 72.31 | 189.41 | 38.48 |
 | 2750 | 16.13 | 99.39 | 64.84 | 174.67 | 36.76 |
+| 3000 | 16.11 | 92.94 | 59.40 | 164.01 | 35.47 |
+| 3250 | 16.06 | 87.26 | 54.72 | 155.17 | 34.29 |
+| 3500 | 16.03 | 81.82 | 50.20 | 145.89 | 33.11 |
 
-Reading this: UniRef50 perplexity is already low and barely moving (16.6→16.1,
+Reading this: UniRef50 perplexity is already low and barely moving (16.6→16.0,
 close to the teacher's own 15.95 baseline above — makes sense, the student
 warm-starts from teacher layers, and protein modeling was already the
 teacher's strength). The three natural-language subsets are all improving
-steadily and substantially (pubmed 235→99, finemath 204→65, fineedu 401→175)
+steadily and substantially (pubmed 235→82, finemath 204→50, fineedu 401→146)
 — i.e. the replay mix is doing its job of recovering natural-language
-competence, and hasn't plateaued as of step 2750. Overall held-out perplexity
-dropped from 58.5 to 36.8 over the same range. **Not yet a plateau** — Stage 1
-was still running as of this writing (see [`status.md`](status.md)); this
-table should be regenerated with later checkpoints before drawing a "Stage 1
-is done" conclusion.
+competence, and hasn't plateaued as of step 3500. Overall held-out perplexity
+dropped from 58.5 to 33.1 over the same range. Training will be stopped at
+step 5250 (epoch 5) regardless of whether a plateau is reached by then — see
+[`status.md`](status.md).
+
+**Overfitting check**: cross-referencing against training loss at the same
+steps (`train/loss` from wandb run `ltiumvoj`, converted to perplexity):
+
+| step | train ppl | validation ppl (overall) | gap |
+|---:|---:|---:|---:|
+| 2000 | 40.37 | 42.58 | 2.21 |
+| 2500 | 37.77 | 38.48 | 0.71 |
+| 2750 | 35.62 | 36.76 | 1.14 |
+| 3000 | 35.36 | 35.47 | 0.11 |
+| 3250 | 34.44 | 34.29 | −0.15 |
+| 3500 | 32.41 | 33.11 | 0.70 |
+
+The gap stays small (≤2.2 points) and isn't widening with training — if the
+model were starting to memorize training data, train loss would drop faster
+than held-out loss and this gap would grow steadily instead. No overfitting
+signal yet, but this is still only ~28% of the planned 10-epoch schedule;
+FineMath in particular was
+sampled with replacement into the training mix (`kothar-pipeline.md`) and is
+the subset most likely to show overfitting first if it happens. **Not yet a
+plateau** — Stage 1 was still running as of this writing (see
+[`status.md`](status.md)); this table should be regenerated with later
+checkpoints before drawing a "Stage 1 is done" conclusion.
 
 ## Generation pilot: unconditioned vs. Met-prefixed (checkpoint-2500)
 
@@ -147,7 +173,7 @@ very short incomplete fragments (4–23 aa) getting inflated scores, not by
 better full-length generations. Output:
 `data/eval/pretraining/checkpoint-2500_gen30_plddt_esmfold2.csv`.
 
-## Structural plausibility pilot: pLDDT (checkpoints 2500 and 2750, M-prefixed, n=30 each)
+## Structural plausibility pilot: pLDDT (checkpoints 2500–3500, M-prefixed, n=30 each)
 
 Folded with ESMFold2 (EvolutionaryScale, via Biohub Forge SDK,
 `scripts/eval/pretraining/plddt_esmfold2_forge.py`, model
@@ -156,20 +182,30 @@ ESM Atlas API (`plddt_esmfold.py`) was tried first but hit persistent `504`
 errors during this run (service-side outage, not a script bug) and was
 abandoned in favor of ESMFold2/Forge.
 
-Both checkpoints: 30/30 sequences folded successfully, same generation
+All checkpoints: 30/30 sequences folded successfully, same generation
 protocol (`--prefix M`, seed 4242, checkpoint's own weights at that step).
 
 | checkpoint | mean | median | min | max |
 |---|---:|---:|---:|---:|
 | 2500 (`checkpoint-2500_gen30_prefixM_plddt_esmfold2.csv`) | 29.50 | 26.44 | 20.53 (seq_15, 314 aa) | 45.76 (seq_28, 77 aa) |
 | 2750 (`checkpoint-2750_gen30_prefixM_plddt_esmfold2.csv`) | 30.29 | 28.80 | 20.44 (seq_15, 310 aa) | 46.02 (seq_13, 37 aa) |
+| 3000 (`checkpoint-3000_gen30_prefixM_plddt_esmfold2.csv`) | 32.50 | 33.31 | 22.29 (seq_27, 242 aa) | 47.53 (seq_4, 23 aa) |
+| 3250 (`checkpoint-3250_gen30_prefixM_plddt_esmfold2.csv`) | 32.46 | 31.06 | 21.50 | 47.53 |
+| 3500 (`checkpoint-3500_gen30_prefixM_plddt_esmfold2.csv`) | 30.01 | 27.47 | 20.37 | 46.02 |
 
-Small improvement (mean +0.8, median +2.4) over 250 training steps — consistent
-in direction with the falling validation perplexity above, but this is two
-points from independent 30-sequence samples (different random draws each
-time, not the same sequences re-folded), so treat it as a weak same-direction
-signal, not a confirmed trend. Worth re-checking every checkpoint alongside
-the perplexity trend rather than in isolation.
+Five checkpoints now: mean 29.50→30.29→32.50→32.46→**30.01**. Unlike the
+perplexity trend (monotonically improving on every source through step
+3500), pLDDT is **not monotonic** — it rose through 3000, roughly held at
+3250, then dropped back at 3500 to below the 3000/3250 level. Since each
+point is an independent 30-sequence sample (different random draws each
+time, not the same sequences re-folded across checkpoints), this reads as
+sampling noise on top of a possibly-flat-or-mildly-improving underlying
+trend, not a real regression in the model — but it's a concrete
+demonstration that this 30-sequence pLDDT pilot is noisier than the
+perplexity trend and shouldn't be read checkpoint-to-checkpoint in isolation
+(a 2-3 point swing is within its noise floor). Larger sample sizes or
+re-folding the same sequence set across checkpoints would be needed to get a
+cleaner signal if this metric becomes load-bearing for a paper claim.
 
 **Read these numbers cautiously**: pLDDT in the 20–46 range is low by the
 standards of *real, evolved* proteins (pLDDT is conventionally reported

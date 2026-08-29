@@ -13,11 +13,38 @@ session named `kothar-pretrain`, logging to
 `~/work/rnd/eshmun/logs/kothar-pretrain-409m.log`, tracked on Weights & Biases
 as `flursky/Kothar/ltiumvoj` ("kothar-pretrain-409m").
 
-As of this writing: **step ~2715/10500** (~26%), effective batch size 192
-(`per_device_batch_size=24 × grad_accum=8 × 1 GPU`), ~74s/step, loss ≈3.6 and
+As of this writing: **step ~3060/10500** (~29%), effective batch size 192
+(`per_device_batch_size=24 × grad_accum=8 × 1 GPU`), ~74s/step, loss ≈3.5 and
 slowly declining, checkpointing every 250 steps to
 `~/work/rnd/eshmun/checkpoints/kothar-pretrain-409m/checkpoint-N`
 (`save_total_limit=3`, so only the 3 most recent survive on disk).
+**1,050 steps/epoch** (confirmed from the live log: step 3050 was logged at
+`epoch=2.905`, and 3050/2.905 = 1050.0 exactly) — not the 6,296 an earlier
+version of this doc mistakenly carried over from the botched first resume
+attempt (wrong batch size).
+
+## Planned early stop: epoch 5 / step 5250 (decided 2026-08-28)
+
+Training will be stopped at **step 5250** (= epoch 5.0 exactly, at 1,050
+steps/epoch), not the full planned 10 epochs / 10,500 steps. Implemented as
+an automated watcher (a persistent background poll on this machine, checking
+every 5 minutes for `checkpoints/kothar-pretrain-409m/checkpoint-5250/trainer_state.json`
+on the remote server, then `tmux kill-session -t kothar-pretrain`) rather than
+restarting the run with `--max-steps 5250` — see
+[`kothar-pipeline.md`](kothar-pipeline.md#stage-1--continued-pretraining-pretrainpy-in-progress)
+for why: `--max-steps` on resume rebuilds the cosine LR schedule around the
+new, smaller total, silently distorting the LR trajectory. This way the
+original 10,500-step schedule stays intact and training just stops partway
+through it once checkpoint-5250 is confirmed written to disk.
+
+**Caveat**: the watcher only survives as long as the Claude Code session/process
+that armed it stays alive — a session restart before step 5250 (this has
+already happened once earlier in the same conversation, dropping an
+unrelated log-tailing monitor that had to be manually re-armed) would silently
+kill the watcher without stopping training. Treat "training progress" checks
+between now and step 5250 as a safety net, not just a status query — if the
+watcher died, someone needs to notice and either re-arm it or stop training
+manually once past step 5250.
 
 ## Incident (2026-08-27→28): server reboot, crash, and resume
 
@@ -63,10 +90,13 @@ GPU in a degraded state.
 
 ## Open items
 
-- Stage 1 has not plateaued yet (see
+- Stage 1 has not plateaued yet through step 3000 (see
   [`experiments.md`](experiments.md#stage-1-validation-perplexity-trend)) —
-  don't move to Stage 2 until it does, or until a deliberate decision to stop
-  early is made and recorded here.
+  the run will still be stopped early at step 5250 per the deliberate
+  decision above, not because of a plateau. Re-run `checkpoint_trend.py` and
+  the generation/pLDDT pilot on checkpoint-5250 once it lands, and decide
+  from there whether Stage 1 output is good enough to move to Stage 2 or
+  whether more pretraining is warranted first.
 - Stage 2 (thinking-aware SFT, conditions a/b) has no training code yet —
   `ROADMAP.md` Phase 3 tracks this.
 - `ROADMAP.md` was rewritten 2026-08-28 to match the actual Kothar phases

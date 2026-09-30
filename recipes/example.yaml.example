@@ -13,7 +13,7 @@
 
 model:
   # Eshmun checkpoint: a local directory or a Hugging Face repo id.
-  name_or_path: khairi/Kothar-student-seed-409M
+  name_or_path: khairi/kothar-it-409m
   # Defaults to `name_or_path` when null.
   tokenizer_name_or_path: null
   # Full precision. Only change this if you have a specific reason --
@@ -27,11 +27,17 @@ data:
   # One of:
   #   - a `Dataset.save_to_disk` directory, e.g.
   #       /home/kabidi/workspace/datasets/sprot-protein-design-reasoning/small/train
+  #     (that one is pretokenized -- see the note under `assistant_only_loss`)
   #   - a file (.jsonl/.json/.parquet/.csv), or a directory of such files
   #   - a Hugging Face repo id (downloaded on first use)
-  # Must contain a `messages` column:
-  #   [{"role": "user", "content": "..."},
-  #    {"role": "assistant", "content": "..."}]
+  #
+  # Either of two shapes is accepted:
+  #   conversational -- a `messages` column:
+  #     [{"role": "user", "content": "..."},
+  #      {"role": "assistant", "content": "..."}]
+  #   pretokenized -- `input_ids`, plus `labels` when the loss mask is already
+  #     built. The labels are used as-is, so `assistant_only_loss` does not
+  #     apply and `data.chat_template` is ignored.
   name_or_path: /home/kabidi/workspace/datasets/sprot-protein-design-reasoning/small/train
   # Hub dataset config name, when the dataset has one.
   config: null
@@ -50,9 +56,10 @@ data:
   eval_split: null
   eval_fraction: null
 
-  # Path to a .jinja template, to override the one in the checkpoint.
-  # src/eshmun/chat_template.jinja carries the {% generation %} markers that
-  # `assistant_only_loss: true` requires; released checkpoints do not have them.
+  # Path to a .jinja template, to override the one in the checkpoint. Only used
+  # to render `messages`-format data. src/eshmun/chat_template.jinja carries the
+  # {% generation %} markers that `assistant_only_loss: true` requires;
+  # released checkpoints do not have them.
   chat_template: src/eshmun/chat_template.jinja
 
 # Passed through to TRL's SFTConfig, so any field SFTConfig accepts is valid
@@ -61,9 +68,10 @@ training:
   output_dir: runs/sft/eshmun-409m
 
   max_length: 2048
-  # Train only on assistant turns. Requires the chat template to wrap
-  # assistant turns in {% generation %}...{% endgeneration %}; the script
-  # checks for this up front and fails with a clear message if it is missing.
+  # Train only on assistant turns. Requires `messages`-format data plus a chat
+  # template that wraps assistant turns in {% generation %}...{% endgeneration %};
+  # the script checks both up front. Leave false for pretokenized data, where
+  # the `labels` column already carries the mask.
   assistant_only_loss: true
   # Concatenate short examples up to `max_length` to cut padding.
   packing: false
@@ -76,7 +84,9 @@ training:
 
   learning_rate: 1.0e-5
   lr_scheduler_type: cosine
-  warmup_ratio: 0.03
+  # A float below 1 here is a fraction of total steps -- the same thing
+  # `warmup_ratio` meant before transformers 5.x dropped it.
+  warmup_steps: 0.03
   weight_decay: 0.0
   max_grad_norm: 1.0
   optim: adamw_torch

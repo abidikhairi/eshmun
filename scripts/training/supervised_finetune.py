@@ -1,13 +1,19 @@
 #!/usr/bin/env python
 """Recipe-driven supervised fine-tuning for Eshmun causal language models.
 
-Trains an Eshmun checkpoint on data that follows the standard `messages`
-schema, rendering each conversation with the tokenizer's own chat template:
+Accepts either of two dataset shapes:
 
-    {"messages": [
-        {"role": "user", "content": "..."},
-        {"role": "assistant", "content": "..."}
-    ]}
+  conversational -- a `messages` column, rendered with the tokenizer's chat
+  template:
+
+      {"messages": [
+          {"role": "user", "content": "..."},
+          {"role": "assistant", "content": "..."}
+      ]}
+
+  pretokenized -- `input_ids`, plus `labels` when the loss mask is already
+  built (`-100` on positions that should not contribute). The mask is then
+  whatever the data says, so `assistant_only_loss` does not apply.
 
 Hyperparameters live in a YAML recipe rather than on the command line, so runs
 stay reproducible and diffable. See `recipes/example.yaml.example` for the full
@@ -83,6 +89,16 @@ DATA_KEYS = {
     "eval_name_or_path",
     "eval_fraction",
     "chat_template",
+}
+
+# Names that older transformers/TRL accepted, mapped to the name this
+# environment wants. Only renames whose value carries over unchanged belong
+# here, so that pointing at the new name is always safe.
+RENAMED_KEYS = {
+    "evaluation_strategy": "eval_strategy",
+    # transformers 5.x dropped `warmup_ratio`; `warmup_steps` now takes a float
+    # below 1 as a fraction of total steps, which is what a ratio was.
+    "warmup_ratio": "warmup_steps",
 }
 
 
@@ -184,8 +200,14 @@ def validate_keys(section: str, given: dict[str, Any], known: set[str]) -> None:
 
     hints = []
     for key in unknown:
+        renamed = RENAMED_KEYS.get(key)
         close = [k for k in known if key.lower() in k.lower() or k.lower() in key.lower()]
-        hints.append(f"  - {key}" + (f" (did you mean: {', '.join(sorted(close))}?)" if close else ""))
+        if renamed and renamed in known:
+            hints.append(f"  - {key} (renamed: use `{renamed}`)")
+        elif close:
+            hints.append(f"  - {key} (did you mean: {', '.join(sorted(close))}?)")
+        else:
+            hints.append(f"  - {key}")
     _fail(f"unknown key(s) in recipe section `{section}`:\n" + "\n".join(hints))
 
 
@@ -217,12 +239,6 @@ def build_tokenizer(model_cfg: dict[str, Any], data_cfg: dict[str, Any]):
         tokenizer.chat_template = template_file.read_text()
         logger.info("chat template overridden from %s", template_file)
 
-    if not tokenizer.chat_template:
-        _fail(
-            f"tokenizer at {source!r} has no chat template. Either use a checkpoint "
-            "that ships one, or set `data.chat_template` to a .jinja file."
-        )
-
     return tokenizer
 
 
@@ -244,6 +260,80 @@ def check_assistant_mask_support(tokenizer, assistant_only_loss: bool) -> None:
             "This template has no such marker. Either add the markers to the "
             "template, or set `assistant_only_loss: false` to train on every token."
         )
+
+
+def is_pretokenized(dataset: Dataset) -> bool:
+    """True when the dataset arrives already tokenized, i.e. has `input_ids`.
+
+    TRL uses the same test to decide whether to skip its chat-template path.
+    """
+    return "input_ids" in dataset.column_names
+
+
+def validate_pretokenized(dataset: Dataset) -> Dataset:
+    """Check a dataset that is already tokenized.
+
+    TRL skips templating for these, and its collator takes the `labels` column
+    as-is (padding with -100). Whatever mask the data carries is therefore the
+    mask that trains -- there is nothing left for `assistant_only_loss` to do.
+    """
+    if "labels" not in dataset.column_names:
+        logger.warning(
+            "dataset has `input_ids` but no `labels`; every token will train. "
+            "Add a `labels` column holding -100 where a position should not "
+            "contribute, if that is not what you want."
+        )
+        return dataset
+
+    sample = dataset[:5]
+    for i, (ids, labels) in enumerate(zip(sample["input_ids"], sample["labels"])):
+        if len(ids) != len(labels):
+            _fail(
+                f"`input_ids` and `labels` differ in length "
+                f"(row {i}: {len(ids)} vs {len(labels)})"
+            )
+
+    logger.info("pretokenized dataset; the `labels` column supplies the loss mask")
+    return dataset
+
+
+def prepare_dataset(dataset: Dataset, data_cfg: dict[str, Any]) -> Dataset:
+    """Validate whichever of the two supported shapes this dataset has."""
+    if is_pretokenized(dataset):
+        return validate_pretokenized(dataset)
+    return prepare_messages_column(dataset, data_cfg)
+
+
+def check_loss_masking(
+    tokenizer, data_cfg: dict[str, Any], dataset: Dataset, assistant_only_loss: bool
+) -> None:
+    """Check that the loss mask for this dataset can actually be built.
+
+    The two dataset shapes derive it differently, and each fails in its own
+    way, so both are checked up front rather than part-way through training.
+    """
+    if is_pretokenized(dataset):
+        if assistant_only_loss:
+            _fail(
+                "`assistant_only_loss: true` builds the mask by rendering the chat "
+                "template, but this dataset is already tokenized (it has an "
+                "`input_ids` column). Set `assistant_only_loss: false` and carry "
+                "the mask in `labels` instead."
+            )
+        if data_cfg.get("chat_template"):
+            logger.info(
+                "`data.chat_template` is unused for a pretokenized dataset; the "
+                "template only renders `messages`-format data."
+            )
+        return
+
+    if not tokenizer.chat_template:
+        _fail(
+            "the dataset is in `messages` format, which needs a chat template, "
+            "but the tokenizer has none. Set `data.chat_template` to a .jinja file."
+        )
+
+    check_assistant_mask_support(tokenizer, assistant_only_loss)
 
 
 def build_model(model_cfg: dict[str, Any]):
@@ -375,7 +465,7 @@ def build_datasets(data_cfg: dict[str, Any], default_seed: int = 42) -> tuple[Da
     spec = data_cfg["name_or_path"]
     config = data_cfg.get("config")
 
-    train = prepare_messages_column(load_split(spec, config, data_cfg.get("split", "train")), data_cfg)
+    train = prepare_dataset(load_split(spec, config, data_cfg.get("split", "train")), data_cfg)
 
     eval_split = data_cfg.get("eval_split")
     eval_path = data_cfg.get("eval_name_or_path")
@@ -388,11 +478,11 @@ def build_datasets(data_cfg: dict[str, Any], default_seed: int = 42) -> tuple[Da
         )
 
     if eval_split:
-        eval_ds = prepare_messages_column(load_split(spec, config, eval_split), data_cfg)
+        eval_ds = prepare_dataset(load_split(spec, config, eval_split), data_cfg)
     elif eval_path:
         # A separate location, e.g. a sibling `save_to_disk` directory.
         logger.info("eval data comes from %s", eval_path)
-        eval_ds = prepare_messages_column(load_split(eval_path, config, "train"), data_cfg)
+        eval_ds = prepare_dataset(load_split(eval_path, config, "train"), data_cfg)
     elif eval_fraction:
         if not 0.0 < float(eval_fraction) < 1.0:
             _fail("`data.eval_fraction` must be strictly between 0 and 1")
@@ -409,7 +499,7 @@ def build_sft_config(training_cfg: dict[str, Any], has_eval: bool) -> SFTConfig:
     cfg = dict(training_cfg)
 
     # Only evaluate on an interval if there is something to evaluate on.
-    if "eval_strategy" not in cfg and "evaluation_strategy" not in cfg:
+    if "eval_strategy" not in cfg:
         cfg["eval_strategy"] = "steps" if has_eval else "no"
         if has_eval and "eval_steps" not in cfg:
             cfg["eval_steps"] = cfg.get("save_steps", 250)
@@ -434,15 +524,16 @@ def main() -> None:
 
     model_cfg, data_cfg, training_cfg = recipe["model"], recipe["data"], recipe["training"]
 
-    tokenizer = build_tokenizer(model_cfg, data_cfg)
     assistant_only_loss = bool(training_cfg.get("assistant_only_loss", False))
-    check_assistant_mask_support(tokenizer, assistant_only_loss)
+
+    # Everything that fails cheaply runs before the model is loaded.
+    tokenizer = build_tokenizer(model_cfg, data_cfg)
+    train_ds, eval_ds = build_datasets(data_cfg, default_seed=training_cfg.get("seed", 42))
+    check_loss_masking(tokenizer, data_cfg, train_ds, assistant_only_loss)
+    sft_config = build_sft_config(training_cfg, has_eval=eval_ds is not None)
 
     model = build_model(model_cfg)
     maybe_resize_embeddings(model, tokenizer)
-
-    train_ds, eval_ds = build_datasets(data_cfg, default_seed=training_cfg.get("seed", 42))
-    sft_config = build_sft_config(training_cfg, has_eval=eval_ds is not None)
 
     trainer = SFTTrainer(
         model=model,

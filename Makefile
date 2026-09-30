@@ -30,6 +30,7 @@ SSH := ssh -p $(SSH_PORT) -o BatchMode=yes $(SSH_USER)@$(SSH_HOST)
 
 sync:
 	rsync -avz \
+		--exclude='.git/' \
 		--exclude='__pycache__/' --exclude='*.py[cod]' --exclude='.pytest_cache/' \
 		--exclude='.venv/' --exclude='runs/' --exclude='wandb/' --exclude='gpu_server.txt' \
 		-e "ssh -p $(SSH_PORT) -o BatchMode=yes" ./ \

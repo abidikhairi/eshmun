@@ -52,7 +52,7 @@ pull:
 	mkdir -p $(LOCAL_RUN_DIR)
 	# optimizer.pt is the AdamW state -- about 3.3 GB of the 4.9 GB checkpoint,
 	# and only needed to resume training from it.
-	rsync -avz \
+	rsync -avz --partial \
 		--exclude='optimizer.pt' \
 		-e "ssh -p $(SSH_PORT) -o BatchMode=yes" \
 		$(SSH_USER)@$(SSH_HOST):$(REMOTE_DIR)/$(REMOTE_RUN_DIR)/$(CHECKPOINT)/ \

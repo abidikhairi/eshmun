@@ -24,3 +24,10 @@ docs/paper
 # Server credentials
 gpu_server.txt
 Makefile.local
+
+# Training recipes -- local hyperparameters. Only the committed
+# recipes/example.yaml.example template is tracked.
+recipes/**/*.yaml
+
+# Training runs / checkpoints
+runs/

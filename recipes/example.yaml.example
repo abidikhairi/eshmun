@@ -1,0 +1,95 @@
+# Example SFT recipe for scripts/training/supervised_finetune.py
+#
+# Copy this to e.g. recipes/sft/eshmun-409m.yaml and edit. Recipe `*.yaml`
+# files are gitignored; only this `.example` template is committed, so it is
+# the reference for which keys are valid. Unknown keys are rejected at
+# startup rather than silently ignored.
+#
+#   python scripts/training/supervised_finetune.py --recipe recipes/sft/eshmun-409m.yaml
+#
+# To check a recipe without loading anything:
+#
+#   python scripts/training/supervised_finetune.py --recipe <file> --print-config
+
+model:
+  # Eshmun checkpoint: a local directory or a Hugging Face repo id.
+  name_or_path: khairi/Kothar-student-seed-409M
+  # Defaults to `name_or_path` when null.
+  tokenizer_name_or_path: null
+  # Full precision. Only change this if you have a specific reason --
+  # float16 has caused unexpected errors on this project.
+  torch_dtype: float32
+  # e.g. sdpa, flash_attention_2. Null lets transformers choose.
+  attn_implementation: null
+  trust_remote_code: false
+
+data:
+  # One of:
+  #   - a `Dataset.save_to_disk` directory, e.g.
+  #       /home/kabidi/workspace/datasets/sprot-protein-design-reasoning/small/train
+  #   - a file (.jsonl/.json/.parquet/.csv), or a directory of such files
+  #   - a Hugging Face repo id (downloaded on first use)
+  # Must contain a `messages` column:
+  #   [{"role": "user", "content": "..."},
+  #    {"role": "assistant", "content": "..."}]
+  name_or_path: /home/kabidi/workspace/datasets/sprot-protein-design-reasoning/small/train
+  # Hub dataset config name, when the dataset has one.
+  config: null
+  # Used only when the source holds several splits; a `save_to_disk`
+  # directory of a single split ignores it.
+  split: train
+  # Renamed to `messages` if your column is called something else.
+  messages_column: messages
+
+  # Eval data. Set at most one of these three:
+  #   eval_name_or_path -- a separate location, e.g. the sibling validation dir
+  #   eval_split        -- another split inside `name_or_path`
+  #   eval_fraction     -- carve a fraction off `train`
+  # Leave all three null to train without evaluation.
+  eval_name_or_path: null
+  eval_split: null
+  eval_fraction: null
+
+  # Path to a .jinja template, to override the one in the checkpoint.
+  # src/eshmun/chat_template.jinja carries the {% generation %} markers that
+  # `assistant_only_loss: true` requires; released checkpoints do not have them.
+  chat_template: src/eshmun/chat_template.jinja
+
+# Passed through to TRL's SFTConfig, so any field SFTConfig accepts is valid
+# here. The keys below are the ones worth setting deliberately.
+training:
+  output_dir: runs/sft/eshmun-409m
+
+  max_length: 2048
+  # Train only on assistant turns. Requires the chat template to wrap
+  # assistant turns in {% generation %}...{% endgeneration %}; the script
+  # checks for this up front and fails with a clear message if it is missing.
+  assistant_only_loss: true
+  # Concatenate short examples up to `max_length` to cut padding.
+  packing: false
+
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8
+  gradient_checkpointing: true
+
+  learning_rate: 1.0e-5
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  optim: adamw_torch
+
+  logging_steps: 10
+  save_steps: 250
+  save_total_limit: 3
+  # Omit `eval_strategy` to auto-select: "steps" when eval data exists,
+  # otherwise "no".
+  eval_strategy: steps
+  eval_steps: 250
+
+  seed: 42
+  # e.g. [wandb], or [] to disable.
+  report_to: [wandb]
+  run_name: eshmun-409m-sft

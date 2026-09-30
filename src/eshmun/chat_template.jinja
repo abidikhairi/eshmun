@@ -1,0 +1,26 @@
+{#-
+  Eshmun chat template.
+
+  Assistant turns are wrapped in `{% generation %}` so that
+  `apply_chat_template(..., return_assistant_tokens_mask=True)` marks exactly
+  the assistant tokens -- content plus the trailing EOS, so the model learns to
+  stop. Training uses this to compute loss on assistant turns only
+  (`assistant_only_loss: true`). Removing the markers renders identical text but
+  silently reintroduces loss on the user's prompt tokens.
+-#}
+{%- if messages[0]['role'] == 'system' -%}
+    {{- messages[0]['content'] + '\n\n' -}}
+    {%- set messages = messages[1:] -%}
+{%- endif -%}
+{%- for message in messages -%}
+    {%- if message['role'] not in ['user', 'assistant'] -%}
+        {{- raise_exception('Only system, user and assistant roles are supported.') -}}
+    {%- endif -%}
+    {%- if message['role'] == 'user' -%}
+        {{- message['content'] + '\n' -}}
+    {%- else -%}
+        {%- generation -%}
+        {{- message['content'] + eos_token -}}
+        {%- endgeneration -%}
+    {%- endif -%}
+{%- endfor -%}

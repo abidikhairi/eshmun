@@ -20,6 +20,12 @@ drifts into on leaving the sequence -- prose, or literal `</s>`/`<pad>` text
 leaking through the decoder. Filtering to the alphabet is deliberate: stripping
 only `Ƥ` has been observed on this project to leave that garbage behind.
 
+When no `<protein>` tag appears at all -- which an early checkpoint does,
+emitting the residues bare and with no `Sequence:` prefix -- the longest run of
+`Ƥ`-prefixed residues stands in for the span. `Ƥ` occurs on residue tokens and
+nowhere else, so this stays exact where filtering the whole response would not:
+`family eukaryota` is almost entirely valid residue letters.
+
     python scripts/eval/generate.py --model runs/sft/checkpoint-1000 \\
         --input prompts.json --output generations.json
 
@@ -38,6 +44,7 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 import torch
+from tokenizers import decoders
 
 try:
     from eshmun.models.eshmun import EshmunForCausalLM
@@ -58,6 +65,10 @@ PROTEIN_END = "</protein>"
 # The one-letter amino-acid alphabet. Residue tokens carry a `Ƥ` prefix that is
 # not a residue, so filtering to this set removes it too.
 RESIDUES = frozenset("ACDEFGHIKLMNPQRSTVWY")
+
+# The marker on every residue token. It appears on residues and nowhere else,
+# which is what makes it usable as a signal when the tags are missing.
+MARKER = "Ƥ"
 
 # What the decoder leaves on the end of a finished sequence.
 TERMINATORS = ("</s>", "<pad>")
@@ -196,16 +207,50 @@ def extract_reasoning(text: str) -> str | None:
     return span.strip() if span is not None else None
 
 
+def _residue_runs(text: str) -> list[str]:
+    """Contiguous runs of `Ƥ`-prefixed residues, reduced to their letters.
+
+    A run ends at the first character that is not a marked residue, so prose
+    between two stretches of sequence separates them rather than joining them.
+    """
+    runs: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(text):
+        if (
+            text[index] == MARKER
+            and index + 1 < len(text)
+            and text[index + 1] in RESIDUES
+        ):
+            current.append(text[index + 1])
+            index += 2
+            continue
+        if current:
+            runs.append("".join(current))
+            current = []
+        index += 1
+    if current:
+        runs.append("".join(current))
+    return runs
+
+
 def extract_sequence(text: str) -> str | None:
-    """Residues from the `<protein>` span, or None when the tag never appears.
+    """Residues from the `<protein>` span, or from the bare marked runs.
 
     A span that is present but holds no residues yields "", which keeps
     "the model wrote nothing valid" distinct from "the model never got there".
+
+    With no `<protein>` tag anywhere, the longest marked run stands in: an
+    early checkpoint emits its residues bare, and the marker still identifies
+    them exactly where filtering the whole response would sweep up prose. The
+    longest run is taken rather than every run joined, so two fragments
+    separated by prose do not become one chimeric sequence.
     """
     span = _span(text, PROTEIN_START, PROTEIN_END)
-    if span is None:
-        return None
-    return "".join(character for character in span if character in RESIDUES)
+    if span is not None:
+        return "".join(character for character in span if character in RESIDUES)
+    runs = _residue_runs(text)
+    return max(runs, key=len) if runs else None
 
 
 def render_prompt(tokenizer: EshmunTokenizer, prompt: str) -> str:
@@ -302,6 +347,18 @@ def main() -> None:
     tokenizer_source = args.tokenizer or args.model
     logger.info("loading tokenizer: %s", tokenizer_source)
     tokenizer = EshmunTokenizer.from_pretrained(tokenizer_source)
+
+    # The fine-tuning checkpoints save a `tokenizer.json` with no `decoder`, so
+    # `decode` cannot invert the byte-level encoding: it falls back to joining
+    # tokens with spaces and leaves `Ġ` (space) and `Ċ` (newline) literal in the
+    # text. The Hub model of the same lineage ships the decoder; restore it
+    # rather than shipping a response the model never wrote.
+    if tokenizer.backend_tokenizer.decoder is None:
+        tokenizer.backend_tokenizer.decoder = decoders.ByteLevel()
+        logger.warning(
+            "tokenizer at %s carries no decoder; installed ByteLevel",
+            tokenizer_source,
+        )
 
     if not tokenizer.chat_template:
         _fail(

@@ -32,15 +32,16 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 import torch
+import torch.nn.functional as F
 import yaml
 
 try:
-    from eshmun.models.eshmun import EshmunForCausalLM
+    from eshmun.models.eshmun import EshmunConfig, EshmunForCausalLM
     from eshmun.tokenization import EshmunTokenizer
 except ModuleNotFoundError:
     # Running from a checkout rather than an installed package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-    from eshmun.models.eshmun import EshmunForCausalLM
+    from eshmun.models.eshmun import EshmunConfig, EshmunForCausalLM
     from eshmun.tokenization import EshmunTokenizer
 
 from datasets import Dataset, load_dataset, load_from_disk
@@ -77,6 +78,7 @@ MODEL_KEYS = {
     "tokenizer_name_or_path",
     "torch_dtype",
     "attn_implementation",
+    "attention_dropout",
     "trust_remote_code",
 }
 
@@ -242,6 +244,19 @@ def build_tokenizer(model_cfg: dict[str, Any], data_cfg: dict[str, Any]):
     return tokenizer
 
 
+def tag_id(tokenizer, token: str) -> int:
+    """The single token id `token` encodes to.
+
+    `convert_tokens_to_ids` quietly hands back the unk id for a token the
+    tokenizer does not know, which would put a loss span boundary on the wrong
+    token without a word, so the encoding itself is checked instead.
+    """
+    ids = tokenizer.encode(token, add_special_tokens=False)
+    if len(ids) != 1:
+        _fail(f"{token!r} is not a single token for this tokenizer (got {ids})")
+    return ids[0]
+
+
 def check_assistant_mask_support(tokenizer, assistant_only_loss: bool) -> None:
     """Fail early if `assistant_only_loss` cannot work with this template.
 
@@ -351,6 +366,20 @@ def build_model(model_cfg: dict[str, Any]):
     }
     if model_cfg.get("attn_implementation"):
         kwargs["attn_implementation"] = model_cfg["attn_implementation"]
+
+    # Each attention module copies `config.attention_dropout` into itself at
+    # `__init__`, so the override has to happen on the config *before* the model
+    # is built -- setting it on the loaded model afterwards would leave every
+    # live module at the value it was born with.
+    dropout = model_cfg.get("attention_dropout")
+    if dropout is not None:
+        dropout = float(dropout)
+        if not 0.0 <= dropout < 1.0:
+            _fail(f"`model.attention_dropout` must be in [0, 1), got {dropout}")
+        config = EshmunConfig.from_pretrained(source)
+        config.attention_dropout = dropout
+        kwargs["config"] = config
+        logger.info("attention dropout overridden to %s", dropout)
 
     return EshmunForCausalLM.from_pretrained(source, **kwargs)
 
@@ -508,6 +537,171 @@ def build_sft_config(training_cfg: dict[str, Any], has_eval: bool) -> SFTConfig:
     return SFTConfig(**cfg)
 
 
+# --- the span-weighted cross-entropy objective -------------------------------
+#
+# The objective averages cross-entropy inside two spans and mixes the two
+# means, instead of taking a single mean over every supervised token:
+#
+#     L = 0.25 * mean(CE_think) + 0.75 * mean(CE_seq)
+#
+#   * thinking span -- the first supervised token through `</think>`
+#   * sequence span -- everything after it: `<protein>`, the residues,
+#     `</protein>`, and the closing `</s>`, so the end-of-turn token keeps
+#     being trained
+#
+# The weights sit where the corpus' own loss mass already is: on the small
+# split, 25.7% of labeled tokens fall in the thinking span and 74.3% in the
+# sequence span (measured over 500 rows, closers included, which is exactly how
+# this partition cuts them). So the mixture stays put and the split just
+# becomes explicit -- and turnable -- instead of implicit in the token counts.
+#
+# Inside a span the tokens are not weighted equally: the token that *closes*
+# the span -- `</think>` in the thinking span, `</protein>` in the sequence
+# span -- carries STRUCTURAL_TOKEN_WEIGHT instead of 1. An early stop is one
+# wrong token in a row of ~150, worth 0.7% of the sequence span under a plain
+# mean and ~3% at 5. Each span is a weighted mean of its own tokens, so an
+# upweighted token moves mass inside its span rather than rescaling the whole
+# loss.
+THINK_LOSS_WEIGHT = 0.25
+SEQUENCE_LOSS_WEIGHT = 0.75
+STRUCTURAL_TOKEN_WEIGHT = 5.0
+
+
+def span_weighted_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    think_close_id: int,
+    protein_close_id: int,
+    think_weight: float = THINK_LOSS_WEIGHT,
+    sequence_weight: float = SEQUENCE_LOSS_WEIGHT,
+    structural_weight: float = STRUCTURAL_TOKEN_WEIGHT,
+    ignore_index: int = -100,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """The objective above, plus each span's plain mean CE for logging.
+
+    `logits` are the model's full, unsliced outputs. That is what the hook
+    receives: with `compute_loss_func` set the trainer forwards without
+    `labels`, so nothing slices them down to the supervised positions, and the
+    two tensors line up as `logits[:, :-1]` / `labels[:, 1:]`.
+
+    The returned loss is a mean over the batch; a caller under gradient
+    accumulation scales it by its share of `num_items_in_batch` (see
+    `SpanWeightedSFTTrainer`). The spans are pooled over the batch, not per
+    row, and a batch with an empty span hands the other span the full weight,
+    so neither case can divide by zero.
+    """
+    # `logits[:, t]` predicts `labels[:, t + 1]`. Spans are decided on the
+    # predicted token, so a closer belongs to the span it closes.
+    shift_logits = logits[:, :-1, :]
+    shift_labels = labels[:, 1:]
+    supervised = shift_labels != ignore_index
+
+    per_token = F.cross_entropy(
+        shift_logits.reshape(-1, shift_logits.shape[-1]).float(),
+        shift_labels.reshape(-1).long(),
+        reduction="none",
+        ignore_index=ignore_index,
+    ).reshape(shift_labels.shape)
+
+    # The *first* `</think>` is the boundary; a repeat later in the row belongs
+    # to the sequence span it sits in, not back to the thinking span. With no
+    # `</think>` at all the whole row falls in the thinking span, which the
+    # weights then renormalize into its plain mean.
+    at_think_close = shift_labels == think_close_id
+    at_protein_close = shift_labels == protein_close_id
+    think_seen = at_think_close.cumsum(dim=1)
+    protein_seen = at_protein_close.cumsum(dim=1)
+    first_think_close = at_think_close & (think_seen == 1)
+    first_protein_close = at_protein_close & (protein_seen == 1)
+    in_think = (think_seen == 0) | first_think_close
+    in_sequence = ~in_think
+
+    weight = torch.ones_like(per_token)
+    weight[first_think_close | first_protein_close] = structural_weight
+    weight = weight * supervised
+
+    think_mass = (weight * in_think).sum()
+    sequence_mass = (weight * in_sequence).sum()
+    think_terms = per_token * weight * in_think
+    sequence_terms = per_token * weight * in_sequence
+    think_mean = think_terms.sum() / think_mass.clamp(min=1)
+    sequence_mean = sequence_terms.sum() / sequence_mass.clamp(min=1)
+
+    think_on = think_weight if bool(think_mass > 0) else 0.0
+    sequence_on = sequence_weight if bool(sequence_mass > 0) else 0.0
+    total = think_on + sequence_on
+    if total == 0.0:
+        # Nothing supervised in this batch at all: a zero that still carries
+        # the graph, so the step is a no-op rather than a crash.
+        loss = per_token.sum() * 0.0
+    else:
+        loss = (think_on * think_mean + sequence_on * sequence_mean) / total
+
+    with torch.no_grad():
+        think_plain = (per_token * supervised * in_think).sum()
+        sequence_plain = (per_token * supervised * in_sequence).sum()
+        think_count = (supervised & in_think).sum().clamp(min=1)
+        sequence_count = (supervised & in_sequence).sum().clamp(min=1)
+        diagnostics = {
+            "ce_think": (think_plain / think_count).item(),
+            "ce_seq": (sequence_plain / sequence_count).item(),
+        }
+    return loss, diagnostics
+
+
+class SpanWeightedSFTTrainer(SFTTrainer):
+    """`SFTTrainer` whose objective is `span_weighted_cross_entropy`.
+
+    The objective is installed through `compute_loss_func` rather than by
+    overriding `compute_loss`. With that hook set the trainer sets the labels
+    aside before the forward, so the plain cross-entropy is replaced rather
+    than added to -- it is never computed -- while TRL's entropy and
+    token-accuracy metrics still come out of the same forward.
+
+    The hook also changes the gradient-accumulation convention: with it set,
+    `Trainer.training_step` stops dividing a micro-batch's loss by the
+    accumulation steps and expects the function to use `num_items_in_batch`
+    itself. The loss returned here is scaled by the micro-batch's share of the
+    accumulation window's supervised tokens -- the scaling the model's own
+    summed loss carries -- which also keeps the logged `loss` on the scale of
+    a plain mean.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        think_close_id: int,
+        protein_close_id: int,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.think_close_id = think_close_id
+        self.protein_close_id = protein_close_id
+        # A bound method, so `Trainer.compute_loss` can call it exactly as
+        # `compute_loss_func(outputs, labels, num_items_in_batch=...)`.
+        self.compute_loss_func = self._span_weighted_loss
+
+    def _span_weighted_loss(
+        self,
+        outputs: Any,
+        labels: torch.Tensor,
+        num_items_in_batch: torch.Tensor | int | None = None,
+    ) -> torch.Tensor:
+        loss, diagnostics = span_weighted_cross_entropy(
+            outputs.logits, labels, self.think_close_id, self.protein_close_id
+        )
+        mode = "train" if self.model.training else "eval"
+        for name, value in diagnostics.items():
+            self._metrics[mode][name].append(value)
+
+        if num_items_in_batch is not None:
+            # Counted the way `Trainer._get_num_items_in_batch` counts it, so
+            # the two shares agree.
+            counted = labels[..., 1:] if self._loss_shifts_labels else labels
+            loss = loss * (counted != -100).sum() / num_items_in_batch
+        return loss
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -528,6 +722,12 @@ def main() -> None:
 
     # Everything that fails cheaply runs before the model is loaded.
     tokenizer = build_tokenizer(model_cfg, data_cfg)
+    # The loss' span boundaries, resolved before anything expensive is loaded.
+    think_close_id = tag_id(tokenizer, "</think>")
+    protein_close_id = tag_id(tokenizer, "</protein>")
+    logger.info(
+        "loss spans: </think>=%d, </protein>=%d", think_close_id, protein_close_id
+    )
     train_ds, eval_ds = build_datasets(data_cfg, default_seed=training_cfg.get("seed", 42))
     check_loss_masking(tokenizer, data_cfg, train_ds, assistant_only_loss)
     sft_config = build_sft_config(training_cfg, has_eval=eval_ds is not None)
@@ -535,12 +735,14 @@ def main() -> None:
     model = build_model(model_cfg)
     maybe_resize_embeddings(model, tokenizer)
 
-    trainer = SFTTrainer(
+    trainer = SpanWeightedSFTTrainer(
         model=model,
         args=sft_config,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         processing_class=tokenizer,
+        think_close_id=think_close_id,
+        protein_close_id=protein_close_id,
     )
 
     resume = args.resume_from_checkpoint

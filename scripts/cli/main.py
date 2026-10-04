@@ -31,10 +31,9 @@ import logging
 import random
 import sys
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import Any, cast
 
 import torch
-from tokenizers import decoders
 
 try:
     from rich.console import Console
@@ -47,30 +46,28 @@ except ModuleNotFoundError:
 
 try:
     from eshmun.models.eshmun import EshmunForCausalLM
-    from eshmun.tokenization import EshmunTokenizer
+    from eshmun.tokenization import (
+        EshmunTokenizer,
+        extract_reasoning,
+        extract_sequence,
+        load_tokenizer,
+        render_prompt,
+        strip_terminators,
+    )
 except ModuleNotFoundError:
     # Running from a checkout rather than an installed package.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
     from eshmun.models.eshmun import EshmunForCausalLM
-    from eshmun.tokenization import EshmunTokenizer
+    from eshmun.tokenization import (
+        EshmunTokenizer,
+        extract_reasoning,
+        extract_sequence,
+        load_tokenizer,
+        render_prompt,
+        strip_terminators,
+    )
 
 logger = logging.getLogger("cli")
-
-THINK_START = "<think>"
-THINK_END = "</think>"
-PROTEIN_START = "<protein>"
-PROTEIN_END = "</protein>"
-
-# The one-letter amino-acid alphabet. Residue tokens carry a `Ƥ` prefix that is
-# not a residue, so filtering to this set removes it too.
-RESIDUES = frozenset("ACDEFGHIKLMNPQRSTVWY")
-
-# The marker on every residue token. It appears on residues and nowhere else,
-# which is what makes it usable as a signal when the tags are missing.
-MARKER = "Ƥ"
-
-# What the decoder leaves on the end of a finished sequence.
-TERMINATORS = ("</s>", "<pad>")
 
 # The ten instructions the training rows carry, with the family name where it
 # goes. Each is 9-11% of the corpus, so one drawn uniformly reproduces the
@@ -97,12 +94,6 @@ TOP_K = 250
 REPETITION_PENALTY = 1.3
 
 
-def _fail(message: str) -> NoReturn:
-    """Abort with a readable message instead of a traceback."""
-    logger.error(message)
-    raise SystemExit(1)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -121,114 +112,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _span(text: str, start: str, end: str) -> str | None:
-    """Text between `start` and `end`, or None when `start` never appears.
-
-    An `end` that never arrives still yields the remainder: generation hits
-    the token cap often enough that discarding those spans would throw away
-    sequences that are otherwise perfectly usable.
-    """
-    at = text.find(start)
-    if at == -1:
-        return None
-    at += len(start)
-    stop = text.find(end, at)
-    return text[at:] if stop == -1 else text[at:stop]
-
-
-def strip_terminators(text: str) -> str:
-    """Drop trailing EOS/pad markers, leaving the rest of the body alone."""
-    while True:
-        for token in TERMINATORS:
-            if text.endswith(token):
-                text = text[: -len(token)]
-                break
-        else:
-            return text
-
-
-def _residue_runs(text: str) -> list[str]:
-    """Contiguous runs of `Ƥ`-prefixed residues, reduced to their letters.
-
-    A run ends at the first character that is not a marked residue, so prose
-    between two stretches of sequence separates them rather than joining them.
-    """
-    runs: list[str] = []
-    current: list[str] = []
-    index = 0
-    while index < len(text):
-        if (
-            text[index] == MARKER
-            and index + 1 < len(text)
-            and text[index + 1] in RESIDUES
-        ):
-            current.append(text[index + 1])
-            index += 2
-            continue
-        if current:
-            runs.append("".join(current))
-            current = []
-        index += 1
-    if current:
-        runs.append("".join(current))
-    return runs
-
-
-def extract_reasoning(text: str) -> str | None:
-    """The text between `<think>` and `</think>`, or None when it never opens."""
-    span = _span(text, THINK_START, THINK_END)
-    return span.strip() if span is not None else None
-
-
-def extract_sequence(text: str) -> str | None:
-    """Residues from the `<protein>` span, or from the bare marked runs.
-
-    With no `<protein>` tag anywhere, the longest marked run stands in: an
-    early checkpoint emits its residues bare, and the marker still identifies
-    them exactly where filtering the whole response would sweep up prose.
-    """
-    span = _span(text, PROTEIN_START, PROTEIN_END)
-    if span is not None:
-        return "".join(character for character in span if character in RESIDUES)
-    runs = _residue_runs(text)
-    return max(runs, key=len) if runs else None
-
-
-def load_tokenizer(source: str) -> EshmunTokenizer:
-    logger.info("loading tokenizer: %s", source)
-    tokenizer = EshmunTokenizer.from_pretrained(source)
-
-    # A checkpoint saved under the tokenizer bug (commit e2962a5) carries a
-    # `tokenizer.json` with no merges, which no decoder can repair -- this
-    # guard only covers the missing decoder, so such a checkpoint needs
-    # `--tokenizer`.
-    if tokenizer.backend_tokenizer.decoder is None:
-        tokenizer.backend_tokenizer.decoder = decoders.ByteLevel()
-        logger.warning(
-            "tokenizer at %s carries no decoder; installed ByteLevel", source
-        )
-
-    # A merge-less BPE encodes one token per character, and the object exposes
-    # no `merges` to read, so the probe is behavioural: a healthy tokenizer
-    # turns these 16 characters into two or three tokens, a damaged one into 16
-    # (the encoding above found the same 16 ids for both damaged checkpoints).
-    probe = "protein sequence"
-    if len(tokenizer(probe, add_special_tokens=False)["input_ids"]) >= len(probe):
-        logger.warning(
-            "tokenizer at %s encodes one token per character, so prompts are "
-            "not encoded the way the model was trained; pass "
-            "`--tokenizer khairi/kothar-it-409m`",
-            source,
-        )
-
-    if not tokenizer.chat_template:
-        _fail(
-            f"tokenizer at {source!r} has no chat template, which is how the "
-            "prompt is built."
-        )
-    return tokenizer
-
-
 def load_model(source: str, device: torch.device) -> EshmunForCausalLM:
     # float32 on purpose: float16 has repeatedly produced unexpected errors on
     # this project.
@@ -237,18 +120,6 @@ def load_model(source: str, device: torch.device) -> EshmunForCausalLM:
     model.to(device)
     model.eval()
     return model
-
-
-def render_prompt(tokenizer: EshmunTokenizer, prompt: str) -> str:
-    """Render one prompt exactly as the training rows render it."""
-    return cast(
-        str,
-        tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            tokenize=False,
-            add_generation_prompt=True,
-        ),
-    )
 
 
 def generate_one(
@@ -351,7 +222,9 @@ def main() -> None:
     else:
         logger.warning("no CUDA device; generating on CPU will be very slow")
 
-    tokenizer = load_tokenizer(args.tokenizer or args.model)
+    tokenizer = load_tokenizer(
+        args.tokenizer or args.model, require_chat_template=True, probe_merges=True
+    )
     model = load_model(args.model, device)
 
     logger.info(

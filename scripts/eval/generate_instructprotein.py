@@ -44,11 +44,21 @@ import argparse
 import json
 import logging
 import os
+import sys
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+try:
+    from eshmun.errors import fail as _fail
+    from eshmun.tokenization import PROTEIN_END, longest_marked_run, strip_terminators
+except ModuleNotFoundError:
+    # Running from a checkout rather than an installed package.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+    from eshmun.errors import fail as _fail
+    from eshmun.tokenization import PROTEIN_END, longest_marked_run, strip_terminators
 
 logger = logging.getLogger("generate_instructprotein")
 
@@ -62,26 +72,6 @@ PROMPT_TEMPLATE = (
 MAX_NEW_TOKENS = 512
 TOP_K = 40
 TOP_P = 0.95
-
-PROTEIN_END = "</protein>"
-
-# The one-letter amino-acid alphabet. Residue tokens carry a `Ƥ` prefix that is
-# not a residue, so filtering to this set removes it too.
-RESIDUES = frozenset("ACDEFGHIKLMNPQRSTVWY")
-
-# The marker on every residue token. It appears on residues and nowhere else,
-# which is what makes it usable as a signal when the tags are missing.
-MARKER = "Ƥ"
-
-# What the decoder leaves on the end of a finished sequence.
-TERMINATORS = ("</s>", "<pad>")
-
-
-def _fail(message: str) -> NoReturn:
-    """Abort with a readable message instead of a traceback."""
-    logger.error(message)
-    raise SystemExit(1)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -139,58 +129,6 @@ def load_prompts(path: Path) -> list[dict[str, Any]]:
 
     logger.info("%d prompts from %s", len(data), path)
     return data
-
-
-def strip_terminators(text: str) -> str:
-    """Drop trailing EOS/pad markers, leaving the rest of the body alone."""
-    while True:
-        for token in TERMINATORS:
-            if text.endswith(token):
-                text = text[: -len(token)]
-                break
-        else:
-            return text
-
-
-def _residue_runs(text: str) -> list[str]:
-    """Contiguous runs of `Ƥ`-prefixed residues, reduced to their letters.
-
-    A run ends at the first character that is not a marked residue, so prose
-    between two stretches of sequence separates them rather than joining them.
-    """
-    runs: list[str] = []
-    current: list[str] = []
-    index = 0
-    while index < len(text):
-        if (
-            text[index] == MARKER
-            and index + 1 < len(text)
-            and text[index + 1] in RESIDUES
-        ):
-            current.append(text[index + 1])
-            index += 2
-            continue
-        if current:
-            runs.append("".join(current))
-            current = []
-        index += 1
-    if current:
-        runs.append("".join(current))
-    return runs
-
-
-def extract_sequence(text: str) -> str | None:
-    """Residues from the marked runs in the response, or None if there are none.
-
-    The `<protein>` tag opens the prompt rather than the response, so there is
-    no span to take. The longest run of marked residues stands in, which is
-    exact where filtering the whole response would not: prose the model drifts
-    into can be almost entirely valid residue letters. The longest run is taken
-    rather than every run joined, so fragments separated by prose do not become
-    one chimeric sequence.
-    """
-    runs = _residue_runs(text)
-    return max(runs, key=len) if runs else None
 
 
 def write_json(path: Path, records: list[dict[str, Any]]) -> None:
@@ -285,7 +223,7 @@ def main() -> None:
         )
         record["output"] = response
         record["reasoning"] = None
-        record["sanitized_sequence"] = extract_sequence(response)
+        record["sanitized_sequence"] = longest_marked_run(response)
         write_json(args.output, records)
 
         logger.info(
